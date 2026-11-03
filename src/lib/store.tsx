@@ -1,0 +1,264 @@
+"use client";
+// Almacén central de la app.
+// · Modo local (sin .env.local): todo vive en localStorage de este navegador.
+// · Modo nube (con NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_ANON_KEY): inicio de sesión, datos en Supabase
+//   sincronizados cambio por cambio y en tiempo real entre doctor y recepción (ver src/lib/cloud.ts).
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import type { DB } from "./types";
+import { createSeed, DB_VERSION, seedProcedures } from "./mock-data";
+import { supabase } from "./supabase";
+import { applyRemote, cloudEnabled, diff, fullUpload, loadDB, loadProfile, subscribe, SyncQueue, type Clinic, type Profile } from "./cloud";
+import { useUI } from "@/components/ui";
+import { AuthScreen, CenterMessage, OnboardingScreen, RecoveryScreen, SetupScreen } from "@/components/AuthScreens";
+
+export const LOCAL_KEY = "odontologia-avanzada:db";
+export type Role = "doctor" | "recepcion";
+export type SyncState = "saved" | "saving" | "error";
+
+interface Ctx {
+  db: DB;
+  ready: boolean;
+  /** Aplica un cambio inmutable al estado y lo persiste (localStorage o Supabase). */
+  update: (fn: (db: DB) => DB) => void;
+  reset: () => void;
+  replace: (db: DB) => void;
+  mode: "local" | "cloud";
+  /** null en modo local: acceso total. */
+  role: Role | null;
+  profile: Profile | null;
+  clinic: Clinic | null;
+  sync: SyncState;
+  signOut: () => Promise<void>;
+  reload: () => Promise<void>;
+}
+const StoreContext = createContext<Ctx | null>(null);
+
+/** Actualiza datos guardados con versiones anteriores sin perder la información del usuario. */
+export function migrate(d: DB): DB {
+  if (d.version === 2) {
+    d = {
+      ...d,
+      version: 3,
+      prescriptions: d.prescriptions ?? [],
+      procedures: d.procedures.map((p) => p.materials ? p : { ...p, materials: seedProcedures.find((s) => s.id === p.id)?.materials ?? [] }),
+    };
+  }
+  if (d.version === 3) d = { ...d, version: 4, consents: d.consents ?? [] };
+  return d.version === DB_VERSION ? d : createSeed();
+}
+
+/** Lee los datos guardados en este navegador (modo local), si existen. */
+export function readLocal(): DB | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_KEY);
+    return raw ? migrate(JSON.parse(raw) as DB) : null;
+  } catch { return null; }
+}
+
+const Loading = ({ text = "Cargando consultorio…" }: { text?: string }) => (
+  <div className="grid min-h-screen place-items-center bg-bg">
+    <div className="flex flex-col items-center gap-3 text-navy">
+      <div className="h-10 w-10 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+      <p className="text-sm font-semibold">{text}</p>
+    </div>
+  </div>
+);
+
+export function StoreProvider({ children }: { children: React.ReactNode }) {
+  return cloudEnabled ? <CloudStore>{children}</CloudStore> : <LocalStore>{children}</LocalStore>;
+}
+
+/* ====================== Modo local ====================== */
+function LocalStore({ children }: { children: React.ReactNode }) {
+  const [db, setDb] = useState<DB | null>(null);
+
+  useEffect(() => { setDb(readLocal() ?? createSeed()); }, []);
+  useEffect(() => {
+    if (!db) return;
+    try { localStorage.setItem(LOCAL_KEY, JSON.stringify(db)); } catch { /* almacenamiento lleno o bloqueado */ }
+  }, [db]);
+
+  const update = useCallback((fn: (db: DB) => DB) => setDb((d) => (d ? fn(d) : d)), []);
+  const reset = useCallback(() => setDb(createSeed()), []);
+  const replace = useCallback((next: DB) => setDb(migrate(next)), []);
+  const noop = useCallback(async () => {}, []);
+
+  const value = useMemo<Ctx | null>(() => db && ({
+    db, ready: true, update, reset, replace, mode: "local", role: null, profile: null, clinic: null, sync: "saved", signOut: noop, reload: noop,
+  }), [db, update, reset, replace, noop]);
+
+  if (!value) return <Loading />;
+  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+}
+
+/* ====================== Modo nube (Supabase) ====================== */
+type Phase = "loading" | "auth" | "recovery" | "onboarding" | "setup" | "empty" | "ready" | "error";
+
+function CloudStore({ children }: { children: React.ReactNode }) {
+  const { toast } = useUI();
+  const [phase, setPhase] = useState<Phase>("loading");
+  const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [clinic, setClinic] = useState<Clinic | null>(null);
+  const [db, setDb] = useState<DB | null>(null);
+  const [sync, setSync] = useState<SyncState>("saved");
+  const [error, setError] = useState("");
+  const dbRef = useRef<DB | null>(null);
+  const queue = useRef<SyncQueue | null>(null);
+
+  // Sesión
+  useEffect(() => {
+    const sb = supabase!;
+    sb.auth.getSession().then(({ data }) => { setSession(data.session); if (!data.session) setPhase("auth"); });
+    const { data: sub } = sb.auth.onAuthStateChange((event, s) => {
+      setSession(s);
+      if (event === "PASSWORD_RECOVERY") setPhase("recovery");
+      else if (!s) { setPhase("auth"); setProfile(null); setClinic(null); setDb(null); dbRef.current = null; }
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // Perfil → clínica → datos
+  const load = useCallback(async () => {
+    if (!session) return;
+    setPhase("loading");
+    try {
+      const { profile, clinic } = await loadProfile(session.user.id);
+      setProfile(profile); setClinic(clinic);
+      if (!profile || !clinic) return setPhase("onboarding");
+      const remote = await loadDB(clinic.id);
+      if (!remote) return setPhase(profile.rol === "doctor" ? "setup" : "empty");
+      const ready = migrate(remote);
+      dbRef.current = ready; setDb(ready); setPhase("ready");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e)); setPhase("error");
+    }
+  }, [session]);
+  const userId = session?.user.id;
+  useEffect(() => { if (userId && phase !== "recovery") load(); }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cola de sincronización + tiempo real
+  useEffect(() => {
+    if (phase !== "ready" || !clinic || !userId) return;
+    const q = new SyncQueue(clinic.id, userId, (s, err) => {
+      setSync(s);
+      if (s === "error") toast(`No se pudo guardar en la nube: ${err}`, "error");
+    });
+    queue.current = q;
+    const unsub = subscribe(clinic.id, userId, (ev) => {
+      if (!dbRef.current) return;
+      dbRef.current = applyRemote(dbRef.current, ev);
+      setDb(dbRef.current);
+    });
+    const warn = (e: BeforeUnloadEvent) => { if (q.pending) { q.flush(); e.preventDefault(); } };
+    window.addEventListener("beforeunload", warn);
+    return () => { unsub(); window.removeEventListener("beforeunload", warn); q.flush(); queue.current = null; };
+  }, [phase, clinic, userId, toast]);
+
+  const update = useCallback((fn: (db: DB) => DB) => {
+    const prev = dbRef.current;
+    if (!prev || !clinic) return;
+    const next = fn(prev);
+    if (next === prev) return;
+    const ch = diff(prev, next, clinic.id);
+    if (profile?.rol === "recepcion") {
+      const forbidden = ch.upserts.some((u) => u.coleccion === "settings" || u.coleccion === "procedures")
+        || ch.deletes.some((d) => d.coleccion !== "appointments");
+      if (forbidden) { toast("Esta acción solo la puede hacer el doctor", "error"); return; }
+    }
+    dbRef.current = next;
+    setDb(next);
+    queue.current?.push(ch);
+  }, [clinic, profile, toast]);
+  const reset = useCallback(() => update(() => createSeed()), [update]);
+  const replace = useCallback((next: DB) => update(() => migrate(next)), [update]);
+  const signOut = useCallback(async () => { await queue.current?.flush(); await supabase!.auth.signOut(); }, []);
+
+  /** Primera carga de una clínica vacía (lo elige el doctor en la pantalla de configuración inicial). */
+  const initialize = useCallback(async (initial: DB) => {
+    if (!clinic || !userId) return;
+    setPhase("loading");
+    const q = new SyncQueue(clinic.id, userId, (s, err) => { if (s === "error") setError(err ?? ""); });
+    q.push(fullUpload(initial, clinic.id));
+    await q.flush();
+    await load();
+  }, [clinic, userId, load]);
+
+  const value = useMemo<Ctx | null>(() => db && phase === "ready" ? {
+    db, ready: true, update, reset, replace, mode: "cloud", role: profile?.rol ?? null, profile, clinic, sync, signOut, reload: load,
+  } : null, [db, phase, update, reset, replace, profile, clinic, sync, signOut, load]);
+
+  if (phase === "auth") return <AuthScreen />;
+  if (phase === "recovery") return <RecoveryScreen onDone={() => load()} />;
+  if (phase === "onboarding") return <OnboardingScreen email={session?.user.email ?? ""} onDone={load} onSignOut={signOut} />;
+  if (phase === "setup" && clinic && profile) return <SetupScreen clinic={clinic} profile={profile} local={readLocal()} onChoose={initialize} />;
+  if (phase === "empty") return <CenterMessage title="La clínica aún no tiene datos" text="El doctor debe completar la configuración inicial. Cuando lo haga, presiona Reintentar." action={load} actionLabel="Reintentar" onSignOut={signOut} />;
+  if (phase === "error") return <CenterMessage title="No se pudo conectar con la nube" text={error} action={load} actionLabel="Reintentar" onSignOut={signOut} />;
+  if (!value) return <Loading text="Conectando con la nube…" />;
+  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+}
+
+export function useStore() {
+  const ctx = useContext(StoreContext);
+  if (!ctx) throw new Error("useStore debe usarse dentro de <StoreProvider>");
+  return ctx;
+}
+
+/* ---------- Helpers de colección ---------- */
+type Coll = "patients" | "procedures" | "appointments" | "budgets" | "payments" | "materials" | "expenses" | "prescriptions" | "consents";
+type Item<K extends Coll> = DB[K][number];
+
+export function useCollection<K extends Coll>(key: K) {
+  const { db, update } = useStore();
+  const list = db[key] as Item<K>[];
+  return {
+    list,
+    get: (id?: string) => list.find((x) => x.id === id),
+    add: (item: Item<K>) => update((d) => ({ ...d, [key]: [item, ...(d[key] as Item<K>[])] })),
+    save: (item: Item<K>) =>
+      update((d) => {
+        const arr = d[key] as Item<K>[];
+        const exists = arr.some((x) => x.id === item.id);
+        return { ...d, [key]: exists ? arr.map((x) => (x.id === item.id ? item : x)) : [item, ...arr] };
+      }),
+    patch: (id: string, changes: Partial<Item<K>>) =>
+      update((d) => ({ ...d, [key]: (d[key] as Item<K>[]).map((x) => (x.id === id ? { ...x, ...changes } : x)) })),
+    remove: (id: string) => update((d) => ({ ...d, [key]: (d[key] as Item<K>[]).filter((x) => x.id !== id) })),
+  };
+}
+
+/* ---------- Cálculos derivados compartidos ---------- */
+export const budgetTotals = (b: { items: { price: number; cost: number; qty: number }[]; discount: number }) => {
+  const sub = b.items.reduce((a, r) => a + r.price * r.qty, 0);
+  const total = Math.round(sub * (1 - b.discount / 100));
+  const cost = b.items.reduce((a, r) => a + r.cost * r.qty, 0);
+  return { sub, total, cost, profit: total - cost, pct: total ? Math.round(((total - cost) / total) * 100) : 0 };
+};
+
+export const nextFolio = (db: DB) => Math.max(1000, ...db.budgets.map((b) => b.folio)) + 1;
+
+export const paidForBudget = (db: DB, budgetId: string) =>
+  db.payments.filter((p) => p.budgetId === budgetId).reduce((a, p) => a + p.amount, 0);
+
+export const patientBalance = (db: DB, patientId: string) => {
+  const accepted = db.budgets.filter((b) => b.patientId === patientId && b.status === "aceptado");
+  const owed = accepted.reduce((a, b) => a + budgetTotals(b).total - paidForBudget(db, b.id), 0);
+  return Math.max(0, owed);
+};
+
+/** Descuenta del inventario lo que consume un tratamiento (multiplicado por `times`). */
+export const consumeMaterials = (d: DB, procedureId: string | undefined, times = 1): DB => {
+  const proc = d.procedures.find((p) => p.id === procedureId);
+  if (!proc?.materials?.length) return d;
+  return {
+    ...d,
+    materials: d.materials.map((m) => {
+      const use = proc.materials!.find((x) => x.materialId === m.id);
+      return use ? { ...m, stock: Math.max(0, Math.round((m.stock - use.qty * times) * 100) / 100) } : m;
+    }),
+  };
+};
+
+export const nextConsentFolio = (db: DB) => Math.max(0, ...db.consents.map((c) => c.folio)) + 1;
+export const nextRxFolio = (db: DB) => Math.max(0, ...db.prescriptions.map((r) => r.folio)) + 1;
