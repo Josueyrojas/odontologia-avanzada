@@ -6,8 +6,8 @@ import Shell from "@/components/Shell";
 const jakarta = Plus_Jakarta_Sans({ subsets: ["latin"], variable: "--font-jakarta" });
 
 export const metadata: Metadata = {
-  title: "Odontología Avanzada",
-  description: "Sistema de gestión del consultorio",
+  title: "DentalFlow",
+  description: "DentalFlow · Gestión del consultorio dental",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

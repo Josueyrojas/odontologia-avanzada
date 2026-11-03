@@ -1,6 +1,7 @@
 "use client";
 // Pantallas de acceso del modo nube: sesión, alta de clínica y configuración inicial.
 import { useState } from "react";
+import Image from "next/image";
 import { Building2, CalendarCheck, Cloud, Database, KeyRound, LogOut, ShieldCheck, Sparkles, Upload, Users } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { createClinic, joinClinic, type Clinic, type Profile } from "@/lib/cloud";
@@ -20,28 +21,43 @@ const es = (msg: string) => {
   return msg;
 };
 
+/** Marca del producto. */
+function Brand({ size = "lg" }: { size?: "lg" | "sm" }) {
+  const big = size === "lg";
+  return (
+    <div className="flex items-center gap-3">
+      <div className={`grid place-items-center rounded-2xl bg-gradient-to-br from-[#2BC487] to-[#0A6B46] shadow-lg shadow-black/20 ${big ? "h-12 w-12" : "h-11 w-11"}`}><Logo size={big ? 26 : 22} /></div>
+      <div>
+        <p className={`font-extrabold leading-tight tracking-tight ${big ? "text-2xl" : "text-xl"}`}>Dental<span className="text-[#2BC487]">Flow</span></p>
+        <p className={`text-[11px] font-semibold tracking-[.2em] ${big ? "text-white/60" : "text-muted"}`}>GESTIÓN DENTAL</p>
+      </div>
+    </div>
+  );
+}
+
 function Frame({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid min-h-screen bg-bg lg:grid-cols-[1.1fr_1fr]">
-      <div className="relative hidden overflow-hidden bg-gradient-to-br from-navy via-navy-700 to-[#0E4D57] p-12 text-white lg:flex lg:flex-col">
-        <div className="flex items-center gap-3">
-          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-[#2BC487] to-[#0A6B46] shadow-lg"><Logo size={26} /></div>
-          <div><p className="text-xl font-extrabold leading-tight">Odontología</p><p className="text-xs tracking-widest text-navy-300">AVANZADA</p></div>
-        </div>
-        <div className="my-auto max-w-md">
+      <div className="relative hidden overflow-hidden bg-navy p-12 text-white lg:flex lg:flex-col">
+        {/* Foto del consultorio, desvanecida hacia el azul de la marca para que el texto se lea */}
+        <Image src="/acceso-consultorio.jpg" alt="" fill priority sizes="55vw" className="animate-[drift_30s_ease-out_both] object-cover object-[center_30%] opacity-90" />
+        <div className="absolute inset-0 bg-gradient-to-t from-navy via-navy/75 to-navy/0" />
+        <div className="absolute inset-0 bg-gradient-to-r from-navy/50 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-br from-transparent via-transparent to-[#0E4D57]/50" />
+        <div className="relative"><Brand /></div>
+        <div className="relative mt-auto max-w-md">
           <h1 className="text-4xl font-extrabold leading-tight tracking-tight">Tu consultorio, en orden y en la nube.</h1>
-          <ul className="mt-8 space-y-4 text-[#B8C9DA]">
+          <ul className="mt-8 space-y-4 text-[#C9D6E3]">
             {[
               [CalendarCheck, "Agenda, expediente, presupuestos e inventario en un solo lugar"],
               [Users, "Doctor y recepción ven los cambios al instante"],
               [ShieldCheck, "Cada clínica solo ve sus propios datos"],
             ].map(([Icon, t], i) => {
               const I = Icon as typeof CalendarCheck;
-              return <li key={i} className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/10 text-[#4BD69B]"><I size={18} /></span><span className="pt-1.5">{t as string}</span></li>;
+              return <li key={i} className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/10 text-[#4BD69B] backdrop-blur"><I size={18} /></span><span className="pt-1.5">{t as string}</span></li>;
             })}
           </ul>
         </div>
-        <div className="absolute -bottom-24 -right-24 h-80 w-80 rounded-full bg-brand/20 blur-3xl" />
       </div>
       <div className="grid place-items-center p-4 sm:p-8">
         <div className="w-full max-w-md animate-rise">{children}</div>
@@ -82,10 +98,7 @@ export function AuthScreen() {
   const titles = { login: "Inicia sesión", signup: "Crea tu cuenta", forgot: "Recuperar contraseña" };
   return (
     <Frame>
-      <div className="mb-6 flex items-center gap-3 lg:hidden">
-        <div className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-[#2BC487] to-[#0A6B46]"><Logo /></div>
-        <p className="text-lg font-extrabold">Odontología Avanzada</p>
-      </div>
+      <div className="mb-8 lg:hidden"><Brand size="sm" /></div>
       <h2 className="text-2xl font-extrabold tracking-tight">{titles[mode]}</h2>
       <p className="mb-6 mt-1 text-sm text-muted">
         {mode === "login" ? "Entra con tu correo del consultorio." : mode === "signup" ? "Después podrás crear tu clínica o unirte con un código." : "Te enviaremos un enlace a tu correo."}

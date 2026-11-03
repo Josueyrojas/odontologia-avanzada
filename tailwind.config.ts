@@ -27,6 +27,7 @@ const config: Config = {
         pop: { from: { opacity: "0", transform: "translateY(12px) scale(.98)" }, to: { opacity: "1", transform: "none" } },
         slide: { from: { opacity: "0", transform: "translateX(24px)" }, to: { opacity: "1", transform: "none" } },
         rise: { from: { opacity: "0", transform: "translateY(8px)" }, to: { opacity: "1", transform: "none" } },
+        drift: { from: { transform: "scale(1.08)" }, to: { transform: "scale(1)" } },
       },
       animation: {
         fade: "fade .18s ease-out",
