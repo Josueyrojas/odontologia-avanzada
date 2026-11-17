@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
-import { BarChart3, CalendarDays, Cloud, FileText, HardDrive, LayoutDashboard, LineChart, LogOut, Package, Settings, Users, X } from "lucide-react";
+import { BarChart3, CalendarDays, Cloud, FileText, HardDrive, LayoutDashboard, LineChart, LogOut, Package, Settings, ShieldCheck, Users, X } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { today } from "@/lib/format";
 
@@ -14,7 +14,7 @@ export const doctorOnly = ["/finanzas", "/reportes", "/configuracion"];
 
 export default function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const path = usePathname();
-  const { db, role, mode, profile, clinic, signOut } = useStore();
+  const { db, role, mode, profile, clinic, signOut, isAdmin } = useStore();
   useEffect(onClose, [path]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const t = today();
@@ -31,6 +31,7 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
     { href: "/reportes", label: "Reportes", icon: BarChart3 },
     { href: "/inventario", label: "Inventario", icon: Package, count: lowStock, alert: true },
     { href: "/configuracion", label: "Configuración", icon: Settings },
+    ...(isAdmin ? [{ href: "/admin", label: "Panel Odonty", icon: ShieldCheck }] : []),
   ].filter((i) => role !== "recepcion" || !doctorOnly.includes(i.href));
 
   return (

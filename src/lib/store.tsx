@@ -8,9 +8,10 @@ import type { Session } from "@supabase/supabase-js";
 import type { DB } from "./types";
 import { createSeed, DB_VERSION, seedProcedures } from "./mock-data";
 import { supabase } from "./supabase";
-import { applyRemote, cloudEnabled, diff, fullUpload, loadDB, loadProfile, subscribe, SyncQueue, type Clinic, type Profile } from "./cloud";
+import { applyRemote, cloudEnabled, diff, fullUpload, isAdmin as checkAdmin, license, loadDB, loadProfile, subscribe, SyncQueue, type Clinic, type Profile } from "./cloud";
 import { useUI } from "@/components/ui";
-import { AuthScreen, CenterMessage, OnboardingScreen, RecoveryScreen, SetupScreen } from "@/components/AuthScreens";
+import { AuthScreen, CenterMessage, LicenseScreen, OnboardingScreen, RecoveryScreen, SetupScreen } from "@/components/AuthScreens";
+import AdminPanel from "@/components/AdminPanel";
 
 export const LOCAL_KEY = "odontologia-avanzada:db";
 export type Role = "doctor" | "recepcion";
@@ -31,6 +32,8 @@ interface Ctx {
   sync: SyncState;
   signOut: () => Promise<void>;
   reload: () => Promise<void>;
+  /** Administrador de Odonty (gestiona licencias de todas las clínicas). */
+  isAdmin: boolean;
 }
 const StoreContext = createContext<Ctx | null>(null);
 
@@ -85,7 +88,7 @@ function LocalStore({ children }: { children: React.ReactNode }) {
   const noop = useCallback(async () => {}, []);
 
   const value = useMemo<Ctx | null>(() => db && ({
-    db, ready: true, update, reset, replace, mode: "local", role: null, profile: null, clinic: null, sync: "saved", signOut: noop, reload: noop,
+    db, ready: true, update, reset, replace, mode: "local", role: null, profile: null, clinic: null, sync: "saved", signOut: noop, reload: noop, isAdmin: false,
   }), [db, update, reset, replace, noop]);
 
   if (!value) return <Loading />;
@@ -93,7 +96,7 @@ function LocalStore({ children }: { children: React.ReactNode }) {
 }
 
 /* ====================== Modo nube (Supabase) ====================== */
-type Phase = "loading" | "auth" | "recovery" | "onboarding" | "setup" | "empty" | "ready" | "error";
+type Phase = "loading" | "auth" | "recovery" | "onboarding" | "admin" | "license" | "setup" | "empty" | "ready" | "error";
 
 function CloudStore({ children }: { children: React.ReactNode }) {
   const { toast } = useUI();
@@ -104,6 +107,7 @@ function CloudStore({ children }: { children: React.ReactNode }) {
   const [db, setDb] = useState<DB | null>(null);
   const [sync, setSync] = useState<SyncState>("saved");
   const [error, setError] = useState("");
+  const [admin, setAdmin] = useState(false);
   const dbRef = useRef<DB | null>(null);
   const queue = useRef<SyncQueue | null>(null);
 
@@ -125,8 +129,11 @@ function CloudStore({ children }: { children: React.ReactNode }) {
     setPhase("loading");
     try {
       const { profile, clinic } = await loadProfile(session.user.id);
-      setProfile(profile); setClinic(clinic);
-      if (!profile || !clinic) return setPhase("onboarding");
+      const adm = await checkAdmin();
+      setProfile(profile); setClinic(clinic); setAdmin(adm);
+      // El administrador sin clínica propia entra directo a su panel
+      if (!profile || !clinic) return setPhase(adm ? "admin" : "onboarding");
+      if (!license(clinic).canUse) return setPhase("license");
       const remote = await loadDB(clinic.id);
       if (!remote) return setPhase(profile.rol === "doctor" ? "setup" : "empty");
       const ready = migrate(remote);
@@ -186,11 +193,13 @@ function CloudStore({ children }: { children: React.ReactNode }) {
   }, [clinic, userId, load]);
 
   const value = useMemo<Ctx | null>(() => db && phase === "ready" ? {
-    db, ready: true, update, reset, replace, mode: "cloud", role: profile?.rol ?? null, profile, clinic, sync, signOut, reload: load,
-  } : null, [db, phase, update, reset, replace, profile, clinic, sync, signOut, load]);
+    db, ready: true, update, reset, replace, mode: "cloud", role: profile?.rol ?? null, profile, clinic, sync, signOut, reload: load, isAdmin: admin,
+  } : null, [db, phase, update, reset, replace, profile, clinic, sync, signOut, load, admin]);
 
   if (phase === "auth") return <AuthScreen />;
   if (phase === "recovery") return <RecoveryScreen onDone={() => load()} />;
+  if (phase === "admin") return <AdminPanel standalone onSignOut={signOut} onBack={clinic ? load : undefined} />;
+  if (phase === "license" && clinic) return <LicenseScreen clinic={clinic} role={profile?.rol ?? "doctor"} onRetry={load} onSignOut={signOut} onOpenAdmin={admin ? () => setPhase("admin") : undefined} />;
   if (phase === "onboarding") return <OnboardingScreen email={session?.user.email ?? ""} onDone={load} onSignOut={signOut} />;
   if (phase === "setup" && clinic && profile) return <SetupScreen clinic={clinic} profile={profile} local={readLocal()} onChoose={initialize} />;
   if (phase === "empty") return <CenterMessage title="La clínica aún no tiene datos" text="El doctor debe completar la configuración inicial. Cuando lo haga, presiona Reintentar." action={load} actionLabel="Reintentar" onSignOut={signOut} />;

@@ -12,7 +12,32 @@ export interface Row { clinica_id: string; coleccion: Coleccion; id: string; dat
 export interface Change { upserts: Row[]; deletes: { coleccion: Coleccion; id: string }[]; }
 
 export interface Profile { user_id: string; clinica_id: string; nombre: string; email: string | null; rol: "doctor" | "recepcion"; }
-export interface Clinic { id: string; nombre: string; codigo: string; }
+export type LicenseState = "pendiente" | "activa" | "suspendida";
+export type LicensePlan = "prueba" | "contado" | "mensualidades" | "renta" | "cortesia";
+export interface Clinic {
+  id: string; nombre: string; codigo: string;
+  // Licencia (opcionales para funcionar aunque aún no se ejecute la actualización del esquema)
+  estado?: LicenseState; plan?: LicensePlan; vence_el?: string | null;
+}
+export interface AdminClinic extends Required<Pick<Clinic, "id" | "nombre" | "codigo">> {
+  estado: LicenseState; plan: LicensePlan; vence_el: string | null; notas: string | null; created_at: string;
+  doctor: string | null; email: string | null; usuarios: number; pacientes: number; ultima_actividad: string | null;
+}
+
+/** Días de gracia después del vencimiento (igual que clinica_activa() en schema.sql). */
+export const GRACE_DAYS = 5;
+export const planLabel: Record<LicensePlan, string> = { prueba: "Prueba", contado: "Contado", mensualidades: "Mensualidades", renta: "Renta mensual", cortesia: "Cortesía" };
+
+/** Estado efectivo de la licencia de una clínica. */
+export function license(c: Pick<Clinic, "estado" | "vence_el">, today = new Date()) {
+  const estado = c.estado ?? "activa";
+  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const daysLeft = c.vence_el ? Math.round((new Date(`${c.vence_el}T00:00`).getTime() - t) / 864e5) : null;
+  const expired = daysLeft !== null && daysLeft < -GRACE_DAYS;
+  const state: "activa" | "por_vencer" | "gracia" | "vencida" | "pendiente" | "suspendida" =
+    estado !== "activa" ? estado : expired ? "vencida" : daysLeft !== null && daysLeft < 0 ? "gracia" : daysLeft !== null && daysLeft <= 7 ? "por_vencer" : "activa";
+  return { state, daysLeft, canUse: estado === "activa" && !expired };
+}
 
 export const cloudEnabled = !!supabase;
 const sb = () => { if (!supabase) throw new Error("Supabase no está configurado"); return supabase; };
@@ -34,6 +59,20 @@ export async function joinClinic(codigo: string, nombreUsuario: string) {
   const { error } = await sb().rpc("unirse_clinica", { codigo_clinica: codigo, nombre_usuario: nombreUsuario });
   if (error) throw error;
 }
+export async function isAdmin(): Promise<boolean> {
+  const { data, error } = await sb().rpc("es_admin");
+  return !error && data === true; // si la función aún no existe, no es administrador
+}
+export async function adminClinics(): Promise<AdminClinic[]> {
+  const { data, error } = await sb().rpc("admin_clinicas");
+  if (error) throw error;
+  return data as AdminClinic[];
+}
+export async function adminUpdateClinic(c: Pick<AdminClinic, "id" | "estado" | "plan" | "vence_el" | "notas">) {
+  const { error } = await sb().rpc("admin_actualizar_clinica", { p_id: c.id, p_estado: c.estado, p_plan: c.plan, p_vence_el: c.vence_el || null, p_notas: c.notas || null });
+  if (error) throw error;
+}
+
 export async function renewCode(): Promise<string> {
   const { data, error } = await sb().rpc("renovar_codigo");
   if (error) throw error;

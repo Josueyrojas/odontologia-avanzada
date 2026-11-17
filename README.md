@@ -1,4 +1,4 @@
-# Odontología Avanzada — Sistema de gestión
+# Odonty — Sistema de gestión dental
 
 Next.js 14 (App Router) · TypeScript · Tailwind CSS · Supabase · Recharts
 
@@ -53,6 +53,18 @@ Notas:
   Reportes ni Configuración, y no puede borrar registros (excepto citas). Postgres lo hace cumplir con RLS.
 - Cada elemento (paciente, cita, pago…) es una fila JSON en la tabla `registros`; la app envía solo lo que
   cambió y agrupa los cambios rápidos (`src/lib/cloud.ts`).
+
+## Licencias (venta del sistema)
+- Cada clínica tiene **estado** (pendiente, activa, suspendida), **plan** y **fecha de vencimiento**.
+- Las clínicas nuevas nacen **pendientes**: el doctor ve "Estamos activando tu clínica" hasta que la actives.
+- Al vencer hay **5 días de gracia** (con aviso dentro de la app desde 7 días antes); después se bloquea el acceso.
+  Los datos **nunca se borran**: al reactivar, todo vuelve a estar disponible.
+- La regla la aplica Postgres (`clinica_activa()` en las políticas RLS), no solo la pantalla.
+- **Panel Odonty** (`/admin`, solo administradores): activar, suspender, cambiar plan, extender vigencia y
+  notas internas de cobro. Muestra conteos, nunca expedientes de pacientes.
+- Tu cuenta se da de alta como administrador al final de `supabase/schema.sql` (tabla `administradores`).
+- Opcional en `.env.local` / Vercel: `NEXT_PUBLIC_SOPORTE_WHATSAPP` y `NEXT_PUBLIC_SOPORTE_EMAIL` para que
+  las clínicas te contacten desde las pantallas de activación y renovación.
 
 ## Estructura
 ```

@@ -1,5 +1,5 @@
 -- =====================================================================
--- Odontología Avanzada · esquema para Supabase
+-- Odonty · esquema para Supabase
 -- Ejecútalo completo en Supabase › SQL Editor › New query › Run.
 -- Es idempotente: puedes volver a ejecutarlo sin perder datos.
 -- =====================================================================
@@ -44,6 +44,35 @@ create table if not exists public.registros (
   updated_by uuid default auth.uid(),
   primary key (clinica_id, coleccion, id)
 );
+
+-- ---------- Licencias de Odonty ----------
+-- Se agregan sin tocar datos: las clínicas que ya existían quedan ACTIVAS y sin vencimiento.
+alter table public.clinicas add column if not exists estado text not null default 'activa';
+alter table public.clinicas add column if not exists plan text not null default 'prueba';
+alter table public.clinicas add column if not exists vence_el date;
+do $$ begin
+  alter table public.clinicas add constraint clinicas_estado_chk check (estado in ('pendiente', 'activa', 'suspendida'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table public.clinicas add constraint clinicas_plan_chk check (plan in ('prueba', 'contado', 'mensualidades', 'renta', 'cortesia'));
+exception when duplicate_object then null; end $$;
+-- A partir de ahora, cada clínica nueva nace pendiente hasta que el administrador la active
+alter table public.clinicas alter column estado set default 'pendiente';
+
+-- Administradores de Odonty (tú). Sin políticas: nadie la lee ni la modifica desde la API.
+create table if not exists public.administradores (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+alter table public.administradores enable row level security;
+
+-- Notas internas del administrador por clínica (pagos, acuerdos). El doctor NO las ve: sin políticas.
+create table if not exists public.clinicas_admin (
+  clinica_id uuid primary key references public.clinicas(id) on delete cascade,
+  notas text,
+  updated_at timestamptz not null default now()
+);
+alter table public.clinicas_admin enable row level security;
 
 -- ---------- Funciones auxiliares (security definer para evitar recursión en RLS) ----------
 create or replace function public.mi_clinica() returns uuid
@@ -100,6 +129,55 @@ grant execute on function public.crear_clinica(text, text) to authenticated;
 grant execute on function public.unirse_clinica(text, text) to authenticated;
 grant execute on function public.renovar_codigo() to authenticated;
 
+create or replace function public.es_admin() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from administradores where user_id = auth.uid())
+$$;
+
+-- Licencia vigente: activa y sin vencer (con 5 días de gracia después de la fecha de vencimiento)
+create or replace function public.clinica_activa() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from clinicas
+    where id = mi_clinica() and estado = 'activa' and (vence_el is null or current_date <= vence_el + 5)
+  )
+$$;
+
+-- Panel de administración: datos de cada clínica SIN acceso a expedientes (solo conteos)
+create or replace function public.admin_clinicas()
+returns table (
+  id uuid, nombre text, codigo text, estado text, plan text, vence_el date, notas text, created_at timestamptz,
+  doctor text, email text, usuarios bigint, pacientes bigint, ultima_actividad timestamptz
+)
+language sql stable security definer set search_path = public as $$
+  select c.id, c.nombre, c.codigo, c.estado, c.plan, c.vence_el,
+    (select a.notas from clinicas_admin a where a.clinica_id = c.id), c.created_at,
+    (select p.nombre from perfiles p where p.clinica_id = c.id and p.rol = 'doctor' order by p.created_at limit 1),
+    (select p.email from perfiles p where p.clinica_id = c.id and p.rol = 'doctor' order by p.created_at limit 1),
+    (select count(*) from perfiles p where p.clinica_id = c.id),
+    (select count(*) from registros r where r.clinica_id = c.id and r.coleccion = 'patients'),
+    (select max(r.updated_at) from registros r where r.clinica_id = c.id)
+  from clinicas c
+  where es_admin()
+  order by c.created_at desc
+$$;
+
+create or replace function public.admin_actualizar_clinica(p_id uuid, p_estado text, p_plan text, p_vence_el date, p_notas text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not es_admin() then raise exception 'No autorizado'; end if;
+  update clinicas set estado = p_estado, plan = p_plan, vence_el = p_vence_el where id = p_id;
+  insert into clinicas_admin (clinica_id, notas, updated_at) values (p_id, p_notas, now())
+  on conflict (clinica_id) do update set notas = excluded.notas, updated_at = now();
+end $$;
+
+revoke all on function public.admin_clinicas() from public, anon;
+revoke all on function public.admin_actualizar_clinica(uuid, text, text, date, text) from public, anon;
+revoke all on function public.es_admin() from anon;
+grant execute on function public.admin_clinicas() to authenticated;
+grant execute on function public.admin_actualizar_clinica(uuid, text, text, date, text) to authenticated;
+grant execute on function public.es_admin() to authenticated;
+
 -- ---------- Seguridad a nivel de fila ----------
 alter table public.clinicas enable row level security;
 alter table public.perfiles enable row level security;
@@ -107,9 +185,8 @@ alter table public.registros enable row level security;
 
 drop policy if exists "ver mi clínica" on public.clinicas;
 create policy "ver mi clínica" on public.clinicas for select to authenticated using (id = mi_clinica());
+-- Nadie edita la clínica directamente: el código se renueva con renovar_codigo() y la licencia la maneja el administrador
 drop policy if exists "doctor edita clínica" on public.clinicas;
-create policy "doctor edita clínica" on public.clinicas for update to authenticated
-  using (id = mi_clinica() and mi_rol() = 'doctor') with check (id = mi_clinica());
 
 drop policy if exists "ver equipo" on public.perfiles;
 create policy "ver equipo" on public.perfiles for select to authenticated using (clinica_id = mi_clinica());
@@ -120,22 +197,29 @@ drop policy if exists "doctor quita miembros" on public.perfiles;
 create policy "doctor quita miembros" on public.perfiles for delete to authenticated
   using (clinica_id = mi_clinica() and mi_rol() = 'doctor' and user_id <> auth.uid());
 
+-- Solo con licencia vigente (clinica_activa). Si se suspende, los datos se conservan pero no se accede a ellos.
 -- Todos en la clínica leen y capturan. La configuración y el catálogo de tratamientos solo los cambia el doctor.
 -- Solo el doctor borra registros (excepto citas, que recepción también puede eliminar).
 drop policy if exists "leer registros" on public.registros;
-create policy "leer registros" on public.registros for select to authenticated using (clinica_id = mi_clinica());
+create policy "leer registros" on public.registros for select to authenticated using (clinica_id = mi_clinica() and clinica_activa());
 drop policy if exists "crear registros" on public.registros;
 create policy "crear registros" on public.registros for insert to authenticated
-  with check (clinica_id = mi_clinica() and (coleccion not in ('settings', 'procedures') or mi_rol() = 'doctor'));
+  with check (clinica_id = mi_clinica() and clinica_activa() and (coleccion not in ('settings', 'procedures') or mi_rol() = 'doctor'));
 drop policy if exists "editar registros" on public.registros;
 create policy "editar registros" on public.registros for update to authenticated
-  using (clinica_id = mi_clinica())
-  with check (clinica_id = mi_clinica() and (coleccion not in ('settings', 'procedures') or mi_rol() = 'doctor'));
+  using (clinica_id = mi_clinica() and clinica_activa())
+  with check (clinica_id = mi_clinica() and clinica_activa() and (coleccion not in ('settings', 'procedures') or mi_rol() = 'doctor'));
 drop policy if exists "borrar registros" on public.registros;
 create policy "borrar registros" on public.registros for delete to authenticated
-  using (clinica_id = mi_clinica() and (mi_rol() = 'doctor' or coleccion = 'appointments'));
+  using (clinica_id = mi_clinica() and clinica_activa() and (mi_rol() = 'doctor' or coleccion = 'appointments'));
 
 -- ---------- Tiempo real (doctor y recepción ven los cambios al instante) ----------
 do $$ begin
   alter publication supabase_realtime add table public.registros;
 exception when duplicate_object then null; end $$;
+
+-- ---------- Administrador de Odonty ----------
+-- Tu cuenta (debe existir: crea primero tu usuario en la app). Si usas otro correo, cámbialo aquí.
+insert into public.administradores (user_id)
+select id from auth.users where email = 'josueyrojas@gmail.com'
+on conflict do nothing;

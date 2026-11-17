@@ -2,9 +2,10 @@
 // Pantallas de acceso del modo nube: sesión, alta de clínica y configuración inicial.
 import { useState } from "react";
 import Image from "next/image";
-import { Building2, CalendarCheck, Cloud, Database, KeyRound, LogOut, ShieldCheck, Sparkles, Upload, Users } from "lucide-react";
+import { Building2, CalendarCheck, Clock, Cloud, Database, KeyRound, Lock, LogOut, Mail, MessageCircle, ShieldCheck, Sparkles, Upload, Users } from "lucide-react";
+import { fmtDate, whatsappLink } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
-import { createClinic, joinClinic, type Clinic, type Profile } from "@/lib/cloud";
+import { createClinic, joinClinic, license, type Clinic, type Profile } from "@/lib/cloud";
 import { createSeed } from "@/lib/mock-data";
 import type { DB } from "@/lib/types";
 import { Logo } from "./Logo";
@@ -28,7 +29,7 @@ function Brand({ size = "lg" }: { size?: "lg" | "sm" }) {
     <div className="flex items-center gap-3">
       <div className={`grid place-items-center rounded-2xl bg-gradient-to-br from-[#2BC487] to-[#0A6B46] shadow-lg shadow-black/20 ${big ? "h-12 w-12" : "h-11 w-11"}`}><Logo size={big ? 26 : 22} /></div>
       <div>
-        <p className={`font-extrabold leading-tight tracking-tight ${big ? "text-2xl" : "text-xl"}`}>Dental<span className="text-[#2BC487]">Flow</span></p>
+        <p className={`font-extrabold leading-tight tracking-tight ${big ? "text-2xl" : "text-xl"}`}>Odon<span className="text-[#2BC487]">ty</span></p>
         <p className={`text-[11px] font-semibold tracking-[.2em] ${big ? "text-white/60" : "text-muted"}`}>GESTIÓN DENTAL</p>
       </div>
     </div>
@@ -238,6 +239,57 @@ export function CenterMessage({ title, text, action, actionLabel, onSignOut }: {
         <div className="mt-5 flex justify-center gap-2">
           <button className="btn-outline" onClick={onSignOut}><LogOut size={16} /> Salir</button>
           <button className="btn-primary" onClick={action}>{actionLabel}</button>
+        </div>
+      </div>
+    </Frame>
+  );
+}
+
+/* ---------------- Licencia: pendiente, suspendida o vencida ---------------- */
+const SOPORTE_WA = process.env.NEXT_PUBLIC_SOPORTE_WHATSAPP;
+const SOPORTE_EMAIL = process.env.NEXT_PUBLIC_SOPORTE_EMAIL;
+
+/** Botones para contactar a soporte de Odonty (configurables en .env). */
+export function SupportLinks({ message, small }: { message: string; small?: boolean }) {
+  if (!SOPORTE_WA && !SOPORTE_EMAIL) return null;
+  const cls = small ? "btn-outline btn-sm" : "btn-outline";
+  return (
+    <>
+      {SOPORTE_WA && <a className={cls} target="_blank" rel="noreferrer" href={whatsappLink(SOPORTE_WA, message)}><MessageCircle size={16} /> WhatsApp</a>}
+      {SOPORTE_EMAIL && <a className={cls} href={`mailto:${SOPORTE_EMAIL}?subject=${encodeURIComponent("Odonty")}&body=${encodeURIComponent(message)}`}><Mail size={16} /> Correo</a>}
+    </>
+  );
+}
+
+export function LicenseScreen({ clinic, role, onRetry, onSignOut, onOpenAdmin }: {
+  clinic: Clinic; role: "doctor" | "recepcion"; onRetry: () => void; onSignOut: () => void; onOpenAdmin?: () => void;
+}) {
+  const { state } = license(clinic);
+  const pending = state === "pendiente";
+  const title = pending ? "¡Tu clínica está registrada!" : state === "suspendida" ? "Acceso suspendido" : "Tu licencia venció";
+  const text = pending
+    ? role === "doctor"
+      ? `Estamos activando Odonty para ${clinic.nombre}. En cuanto esté lista podrás entrar con esta misma cuenta.`
+      : `${clinic.nombre} todavía no está activada. Avísale al doctor; en cuanto se active podrás entrar.`
+    : `${state === "vencida" && clinic.vence_el ? `La licencia de ${clinic.nombre} venció el ${fmtDate(clinic.vence_el, { day: "numeric", month: "long", year: "numeric" })}. ` : ""}Tus datos están guardados y seguros. Para reactivar el acceso, comunícate con Odonty.`;
+  const msg = pending
+    ? `Hola, registré la clínica "${clinic.nombre}" en Odonty y quiero activarla.`
+    : `Hola, quiero reactivar Odonty para la clínica "${clinic.nombre}".`;
+  return (
+    <Frame>
+      <div className="card text-center">
+        <span className={`mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl ${pending ? "bg-brand-soft text-brand-dark" : "bg-[#FDF1D8] text-[#855A06]"}`}>
+          {pending ? <Clock size={28} /> : <Lock size={28} />}
+        </span>
+        <h2 className="text-xl font-extrabold">{title}</h2>
+        <p className="mt-2 text-sm text-muted">{text}</p>
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          {role === "doctor" && <SupportLinks message={msg} />}
+          <button className="btn-primary" onClick={onRetry}>Ya está activa, entrar</button>
+        </div>
+        <div className="mt-4 flex justify-center gap-2">
+          {onOpenAdmin && <button className="btn-ghost text-sm" onClick={onOpenAdmin}><ShieldCheck size={16} /> Panel de administrador</button>}
+          <button className="btn-ghost text-sm text-muted" onClick={onSignOut}><LogOut size={16} /> Cerrar sesión</button>
         </div>
       </div>
     </Frame>
