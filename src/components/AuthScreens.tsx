@@ -5,6 +5,7 @@ import Image from "next/image";
 import { Building2, CalendarCheck, Clock, Cloud, Database, KeyRound, Lock, LogOut, Mail, MessageCircle, ShieldCheck, Sparkles, Upload, Users } from "lucide-react";
 import { fmtDate, whatsappLink } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
+import { LEGAL } from "@/lib/legal";
 import { createClinic, joinClinic, license, type Clinic, type Profile } from "@/lib/cloud";
 import { createSeed } from "@/lib/mock-data";
 import type { DB } from "@/lib/types";
@@ -61,7 +62,13 @@ function Frame({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       <div className="grid place-items-center p-4 sm:p-8">
-        <div className="w-full max-w-md animate-rise">{children}</div>
+        <div className="w-full max-w-md animate-rise">
+          {children}
+          <p className="mt-8 flex justify-center gap-4 text-xs text-muted">
+            <a href="/privacidad" target="_blank" className="hover:text-ink">Aviso de privacidad</a>
+            <a href="/terminos" target="_blank" className="hover:text-ink">Términos de uso</a>
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -71,6 +78,7 @@ export function AuthScreen() {
   const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [accept, setAccept] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -83,7 +91,11 @@ export function AuthScreen() {
         const { error } = await auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else if (mode === "signup") {
-        const { data, error } = await auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } });
+        if (!accept) throw new Error("Para crear tu cuenta acepta el aviso de privacidad y los términos de uso.");
+        const { data, error } = await auth.signUp({
+          email, password,
+          options: { emailRedirectTo: window.location.origin, data: { acepto_terminos: new Date().toISOString(), version_terminos: LEGAL.version } },
+        });
         if (error) throw error;
         if (!data.session) setMsg({ ok: true, text: "Te enviamos un correo para confirmar tu cuenta. Ábrelo y luego inicia sesión." });
       } else {
@@ -113,6 +125,12 @@ export function AuthScreen() {
           </label>
         )}
         {msg && <p className={`rounded-xl p-3 text-sm ${msg.ok ? "bg-brand-soft text-brand-dark" : "bg-[#FBE3E0] text-[#9E2A20]"}`}>{msg.text}</p>}
+        {mode === "signup" && (
+          <label className="flex cursor-pointer items-start gap-2.5 text-sm text-ink-soft">
+            <input type="checkbox" required className="mt-0.5 h-4 w-4 shrink-0 accent-brand" checked={accept} onChange={(e) => setAccept(e.target.checked)} />
+            <span>Acepto el <a href="/privacidad" target="_blank" className="font-semibold text-brand underline">aviso de privacidad</a> y los <a href="/terminos" target="_blank" className="font-semibold text-brand underline">términos de uso</a>.</span>
+          </label>
+        )}
         <button disabled={busy} className="btn-primary">{busy ? "Un momento…" : mode === "login" ? "Entrar" : mode === "signup" ? "Crear cuenta" : "Enviar enlace"}</button>
       </form>
       <p className="mt-5 text-center text-sm text-muted">

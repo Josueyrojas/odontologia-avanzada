@@ -54,6 +54,27 @@ Notas:
 - Cada elemento (paciente, cita, pago…) es una fila JSON en la tabla `registros`; la app envía solo lo que
   cambió y agrupa los cambios rápidos (`src/lib/cloud.ts`).
 
+## Correos en español (confirmación de cuenta y contraseña)
+El correo que trae Supabase por defecto solo entrega a los miembros del proyecto y en inglés. Para clientes reales:
+1. Crea una cuenta en https://resend.com (gratis hasta 3,000 correos/mes) y verifica tu dominio
+   (o usa el remitente de prueba mientras tanto).
+2. En Resend crea una **API key**.
+3. Supabase › **Authentication › Emails › SMTP Settings** › *Enable custom SMTP*:
+   host `smtp.resend.com`, puerto `465`, usuario `resend`, contraseña = la API key,
+   remitente `Odonty <no-responder@tu-dominio>`.
+4. En **Authentication › Emails › Templates** pega cada plantilla de `supabase/emails/`:
+   | Plantilla de Supabase | Archivo | Asunto sugerido |
+   |---|---|---|
+   | Confirm signup | `confirmar-cuenta.html` | Confirma tu cuenta de Odonty |
+   | Reset password | `recuperar-contrasena.html` | Cambia tu contraseña de Odonty |
+   | Change email address | `cambiar-correo.html` | Confirma tu nuevo correo en Odonty |
+   | Magic link | `enlace-acceso.html` | Tu enlace para entrar a Odonty |
+
+## Aviso de privacidad y términos
+`/privacidad` y `/terminos` son públicos y se aceptan al crear la cuenta (se guarda fecha y versión en el usuario).
+Llena tus datos en Vercel/`.env.local`: `NEXT_PUBLIC_LEGAL_RESPONSABLE`, `NEXT_PUBLIC_LEGAL_DOMICILIO`,
+`NEXT_PUBLIC_LEGAL_CIUDAD` y `NEXT_PUBLIC_LEGAL_CORREO`. Haz que un abogado revise los textos (`src/app/privacidad`, `src/app/terminos`).
+
 ## Licencias (venta del sistema)
 - Cada clínica tiene **estado** (pendiente, activa, suspendida), **plan** y **fecha de vencimiento**.
 - Las clínicas nuevas nacen **pendientes**: el doctor ve "Estamos activando tu clínica" hasta que la actives.

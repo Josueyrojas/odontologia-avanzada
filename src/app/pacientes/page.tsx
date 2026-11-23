@@ -2,10 +2,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ChevronRight, Download, LayoutGrid, List, UserPlus, Users } from "lucide-react";
+import { AlertTriangle, ChevronRight, Download, FileSpreadsheet, LayoutGrid, List, UserPlus, Users } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import { Avatar, EmptyState, SearchInput, StatCard } from "@/components/ui";
 import { PatientFormModal } from "@/components/forms";
+import { ImportPatientsModal } from "@/components/ImportPatients";
 import { patientBalance, useStore } from "@/lib/store";
 import { age, downloadCSV, fmtDate, monthKey, mxn, today } from "@/lib/format";
 
@@ -18,6 +19,7 @@ export default function PacientesPage() {
   const [sort, setSort] = useState<Sort>("nombre");
   const [grid, setGrid] = useState(false);
   const [open, setOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
   useEffect(() => { if (new URLSearchParams(window.location.search).get("nuevo")) setOpen(true); }, []);
 
   const t = today();
@@ -48,6 +50,7 @@ export default function PacientesPage() {
   return (
     <>
       <PageHeader kicker="Directorio clínico" title="Pacientes">
+        <button className="btn-outline" onClick={() => setImporting(true)}><FileSpreadsheet size={18} /> Importar Excel</button>
         <button className="btn-outline" onClick={exportCSV}><Download size={18} /> Exportar</button>
         <button className="btn-primary" onClick={() => setOpen(true)}><UserPlus size={18} /> Nuevo paciente</button>
       </PageHeader>
@@ -120,6 +123,7 @@ export default function PacientesPage() {
         )}
       </section>
 
+      <ImportPatientsModal open={importing} onClose={() => setImporting(false)} />
       <PatientFormModal open={open} onClose={() => setOpen(false)} onSaved={(p) => router.push(`/pacientes/${p.id}`)} />
     </>
   );

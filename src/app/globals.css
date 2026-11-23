@@ -52,6 +52,14 @@
   .icon-btn { @apply grid h-9 w-9 place-items-center rounded-lg text-muted transition hover:bg-bg hover:text-ink; }
 }
 
+/* Páginas legales: texto largo legible */
+.legal { line-height: 1.7; color: rgb(var(--c-ink-soft)); }
+.legal h2 { margin: 2rem 0 .6rem; font-size: 1.15rem; font-weight: 800; color: rgb(var(--c-ink)); }
+.legal p { margin: 0 0 .9rem; max-width: 70ch; }
+.legal ul { margin: 0 0 1rem; padding-left: 1.2rem; list-style: disc; max-width: 70ch; }
+.legal li { margin-bottom: .35rem; }
+.legal b { color: rgb(var(--c-ink)); }
+
 /* Scrollbars discretos */
 * { scrollbar-width: thin; scrollbar-color: rgb(var(--c-edge)) transparent; }
 

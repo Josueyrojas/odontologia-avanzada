@@ -39,8 +39,13 @@ function LicenseBanner() {
   );
 }
 
+/** Páginas públicas: se ven sin iniciar sesión y sin el menú de la app. */
+const publicPaths = ["/privacidad", "/terminos"];
+
 export default function Shell({ children }: { children: React.ReactNode }) {
   const [menu, setMenu] = useState(false);
+  const path = usePathname();
+  if (publicPaths.some((p) => path.startsWith(p))) return <>{children}</>;
   return (
     <UIProvider>
       <StoreProvider>
