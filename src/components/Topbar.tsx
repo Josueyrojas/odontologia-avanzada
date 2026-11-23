@@ -89,11 +89,13 @@ export default function Topbar({ onMenu }: { onMenu: () => void }) {
       <p className="ml-auto hidden text-sm font-semibold capitalize text-muted lg:block">{fmtLong(t)}</p>
 
       {mode === "cloud" && (
-        sync === "error"
-          ? <button onClick={reload} className="badge bg-[#FBE3E0] py-2 text-[#9E2A20]" title="Recargar desde la nube"><CloudOff size={14} /> Sin guardar · Reintentar</button>
-          : <span className="hidden items-center gap-1.5 text-xs font-semibold text-muted md:flex" aria-live="polite">
-              {sync === "saving" ? <><Loader2 size={14} className="animate-spin" /> Guardando…</> : <><Cloud size={14} className="text-brand" /> Guardado</>}
-            </span>
+        sync === "offline"
+          ? <span className="badge bg-[#FDF1D8] py-2 text-[#855A06]" title="Los cambios se guardan en este equipo y se envían al volver la conexión"><CloudOff size={14} /> Sin conexión · cambios en espera</span>
+          : sync === "error"
+            ? <button onClick={reload} className="badge bg-[#FBE3E0] py-2 text-[#9E2A20]" title="Se reintenta automáticamente. Clic para recargar desde la nube"><Loader2 size={14} className="animate-spin" /> Reintentando guardar…</button>
+            : <span className="hidden items-center gap-1.5 text-xs font-semibold text-muted md:flex" aria-live="polite">
+                {sync === "saving" ? <><Loader2 size={14} className="animate-spin" /> Guardando…</> : <><Cloud size={14} className="text-brand" /> Guardado</>}
+              </span>
       )}
       <ThemeToggle />
       <div ref={bellRef} className="relative">

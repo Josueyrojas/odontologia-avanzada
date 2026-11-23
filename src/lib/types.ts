@@ -13,7 +13,11 @@ export interface Consent {
   witness?: string;
 }
 
-export interface ClinicalNote { id: string; date: string; text: string; tooth?: number; }
+export interface ClinicalNote {
+  id: string; date: string; text: string; tooth?: number;
+  author?: string;        // quién la escribió
+  createdAt?: string;     // fecha y hora exactas (ISO)
+}
 
 /** Anamnesis / historia clínica (NOM-013). */
 export interface MedicalHistory {

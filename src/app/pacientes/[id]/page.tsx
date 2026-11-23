@@ -19,7 +19,8 @@ type Tab = "odontograma" | "historia" | "citas" | "presupuestos" | "pagos" | "no
 export default function PacienteDetalle() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { db, update } = useStore();
+  const { db, update, profile } = useStore();
+  const author = profile?.nombre ?? db.settings.doctorName;
   const patients = useCollection("patients");
   const budgets = useCollection("budgets");
   const { toast, confirm } = useUI();
@@ -64,7 +65,7 @@ export default function PacienteDetalle() {
   const addNote = (e: React.FormEvent) => {
     e.preventDefault();
     if (!note.trim()) return;
-    patients.patch(p.id, { clinicalNotes: [{ id: uid(), date: t, text: note.trim(), tooth: noteTooth ? +noteTooth : undefined }, ...p.clinicalNotes] });
+    patients.patch(p.id, { clinicalNotes: [{ id: uid(), date: t, text: note.trim(), tooth: noteTooth ? +noteTooth : undefined, author, createdAt: new Date().toISOString() }, ...p.clinicalNotes] });
     setNote(""); setNoteTooth(""); toast("Nota agregada al expediente");
   };
   const newBudget = () => {
@@ -309,8 +310,13 @@ export default function PacienteDetalle() {
                   <li key={n.id} className="relative">
                     <span className="absolute -left-[27px] top-1 h-3 w-3 rounded-full bg-brand ring-4 ring-surface" />
                     <div className="flex items-center gap-2 text-xs font-bold text-muted">
-                      {fmtDate(n.date)}{n.tooth && <span className="badge bg-bg text-ink-soft">Diente {n.tooth}</span>}
-                      <button className="ml-auto text-muted hover:text-danger" aria-label="Eliminar nota" onClick={() => patients.patch(p.id, { clinicalNotes: p.clinicalNotes.filter((x) => x.id !== n.id) })}><Trash2 size={14} /></button>
+                      {fmtDate(n.date)}{n.createdAt && ` · ${new Date(n.createdAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}`}
+                      {n.tooth && <span className="badge bg-bg text-ink-soft">Diente {n.tooth}</span>}
+                      {n.author && <span className="font-semibold">· {n.author}</span>}
+                      {/* NOM-004: las notas de días anteriores no se borran; se corrigen con una nota nueva */}
+                      {n.date === t
+                        ? <button className="ml-auto text-muted hover:text-danger" aria-label="Eliminar nota" title="Solo se pueden borrar notas del mismo día" onClick={() => patients.patch(p.id, { clinicalNotes: p.clinicalNotes.filter((x) => x.id !== n.id) })}><Trash2 size={14} /></button>
+                        : <button className="ml-auto text-xs font-semibold text-brand hover:underline" onClick={() => setNote(`Corrección a la nota del ${fmtDate(n.date)}: `)}>Corregir</button>}
                     </div>
                     <p className="mt-1 text-sm">{n.text}</p>
                   </li>

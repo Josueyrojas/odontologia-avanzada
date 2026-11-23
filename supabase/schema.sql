@@ -213,6 +213,85 @@ drop policy if exists "borrar registros" on public.registros;
 create policy "borrar registros" on public.registros for delete to authenticated
   using (clinica_id = mi_clinica() and clinica_activa() and (mi_rol() = 'doctor' or coleccion = 'appointments'));
 
+-- ---------- Guardado por campos ----------
+-- La app envía solo los campos que cambiaron ("parcial"): si dos personas editan campos distintos del mismo
+-- registro al mismo tiempo, se conservan ambos cambios. Corre con los permisos del usuario (aplica RLS).
+create or replace function public.guardar_registros(filas jsonb) returns void
+language plpgsql security invoker set search_path = public as $$
+declare f jsonb; n int;
+begin
+  for f in select * from jsonb_array_elements(filas) loop
+    if coalesce((f->>'parcial')::boolean, false) then
+      update registros
+         set data = jsonb_strip_nulls(data || (f->'data')), updated_at = now(), updated_by = auth.uid()
+       where clinica_id = (f->>'clinica_id')::uuid and coleccion = f->>'coleccion' and id = f->>'id';
+      get diagnostics n = row_count;
+      if n > 0 then continue; end if;
+      -- El registro aún no existía en la nube: se guarda completo
+    end if;
+    insert into registros (clinica_id, coleccion, id, data, updated_at, updated_by)
+    values ((f->>'clinica_id')::uuid, f->>'coleccion', f->>'id', coalesce(f->'completo', f->'data'), now(), auth.uid())
+    on conflict (clinica_id, coleccion, id) do update set data = excluded.data, updated_at = now(), updated_by = auth.uid();
+  end loop;
+end $$;
+revoke all on function public.guardar_registros(jsonb) from public, anon;
+grant execute on function public.guardar_registros(jsonb) to authenticated;
+
+-- ---------- Bitácora del expediente ----------
+-- Registra automáticamente quién creó, cambió o borró cada registro, y qué había antes.
+-- Nadie puede modificarla ni borrarla desde la app (sin políticas de escritura). Solo el doctor la consulta.
+create table if not exists public.bitacora (
+  id bigserial primary key,
+  clinica_id uuid not null references public.clinicas(id) on delete cascade,
+  coleccion text not null,
+  registro_id text not null,
+  accion text not null check (accion in ('crear', 'editar', 'eliminar')),
+  usuario uuid,
+  usuario_nombre text,
+  fecha timestamptz not null default now(),
+  campos text[],   -- campos que cambiaron
+  antes jsonb      -- valores anteriores de esos campos (o el registro completo si se eliminó)
+);
+create index if not exists bitacora_clinica_fecha_idx on public.bitacora (clinica_id, fecha desc);
+create index if not exists bitacora_registro_idx on public.bitacora (clinica_id, coleccion, registro_id);
+alter table public.bitacora enable row level security;
+drop policy if exists "doctor consulta bitácora" on public.bitacora;
+create policy "doctor consulta bitácora" on public.bitacora for select to authenticated
+  using (clinica_id = mi_clinica() and mi_rol() = 'doctor');
+
+create or replace function public.fn_bitacora() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare cambios text[]; previos jsonb; nombre text;
+begin
+  select p.nombre into nombre from perfiles p where p.user_id = auth.uid();
+  if tg_op = 'INSERT' then
+    insert into bitacora (clinica_id, coleccion, registro_id, accion, usuario, usuario_nombre)
+    values (new.clinica_id, new.coleccion, new.id, 'crear', auth.uid(), nombre);
+    return new;
+  elsif tg_op = 'UPDATE' then
+    if new.data = old.data then return new; end if;
+    select array_agg(k), jsonb_object_agg(k, old.data -> k) into cambios, previos
+    from (
+      select n.key as k from jsonb_each(new.data) n where n.value is distinct from old.data -> n.key
+      union
+      select o.key from jsonb_each(old.data) o where not (new.data ? o.key)
+    ) x;
+    insert into bitacora (clinica_id, coleccion, registro_id, accion, usuario, usuario_nombre, campos, antes)
+    values (new.clinica_id, new.coleccion, new.id, 'editar', auth.uid(), nombre, cambios, jsonb_strip_nulls(previos));
+    return new;
+  else
+    -- Si se está borrando la clínica completa (desde el panel de administración) no hay nada que registrar
+    if not exists (select 1 from clinicas where id = old.clinica_id) then return old; end if;
+    insert into bitacora (clinica_id, coleccion, registro_id, accion, usuario, usuario_nombre, antes)
+    values (old.clinica_id, old.coleccion, old.id, 'eliminar', auth.uid(), nombre, old.data);
+    return old;
+  end if;
+end $$;
+
+drop trigger if exists trg_bitacora on public.registros;
+create trigger trg_bitacora after insert or update or delete on public.registros
+for each row execute function public.fn_bitacora();
+
 -- ---------- Tiempo real (doctor y recepción ven los cambios al instante) ----------
 do $$ begin
   alter publication supabase_realtime add table public.registros;

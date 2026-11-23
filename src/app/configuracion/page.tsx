@@ -4,11 +4,12 @@ import { Building2, Clock, Copy, Database, Download, Pencil, Plus, RefreshCw, Ro
 import PageHeader from "@/components/PageHeader";
 import { Avatar, Modal, Tabs, useUI } from "@/components/ui";
 import { useCollection, useStore } from "@/lib/store";
-import { mxn, today, uid } from "@/lib/format";
+import { fmtDate, mxn, today, uid } from "@/lib/format";
 import type { DB, Procedure, ProcedureMaterial, Settings } from "@/lib/types";
-import { listTeam, removeMember, renewCode, setRole, type Profile } from "@/lib/cloud";
+import { listTeam, loadAudit, removeMember, renewCode, setRole, type AuditEntry, type Profile } from "@/lib/cloud";
+import type { DB as DBType } from "@/lib/types";
 
-type Tab = "clinica" | "tratamientos" | "equipo" | "datos";
+type Tab = "clinica" | "tratamientos" | "equipo" | "bitacora" | "datos";
 
 export default function ConfiguracionPage() {
   const { db, update, reset, replace, mode } = useStore();
@@ -65,9 +66,10 @@ export default function ConfiguracionPage() {
   return (
     <>
       <PageHeader kicker="Preferencias del sistema" title="Configuración" />
-      <Tabs<Tab> value={tab} onChange={setTab} tabs={[{ id: "clinica", label: "Clínica y horario" }, { id: "tratamientos", label: "Tratamientos", count: db.procedures.length }, ...(mode === "cloud" ? [{ id: "equipo" as Tab, label: "Equipo" }] : []), { id: "datos", label: "Datos y respaldo" }]} />
+      <Tabs<Tab> value={tab} onChange={setTab} tabs={[{ id: "clinica", label: "Clínica y horario" }, { id: "tratamientos", label: "Tratamientos", count: db.procedures.length }, ...(mode === "cloud" ? [{ id: "equipo" as Tab, label: "Equipo" }, { id: "bitacora" as Tab, label: "Bitácora" }] : []), { id: "datos", label: "Datos y respaldo" }]} />
 
       {tab === "equipo" && <TeamPanel />}
+      {tab === "bitacora" && <AuditPanel />}
 
       {tab === "clinica" && (
         <form onSubmit={saveSettings} className="grid gap-5 xl:grid-cols-2">
@@ -282,5 +284,87 @@ function TeamPanel() {
         ))}
       </section>
     </div>
+  );
+}
+
+/* ---------------- Bitácora del expediente ---------------- */
+const collLabel: Record<string, string> = {
+  patients: "Paciente", appointments: "Cita", budgets: "Presupuesto", payments: "Pago", prescriptions: "Receta",
+  consents: "Consentimiento", materials: "Material", expenses: "Egreso", procedures: "Tratamiento", settings: "Configuración",
+};
+const fieldLabel: Record<string, string> = {
+  name: "nombre", phone: "teléfono", email: "correo", birthDate: "fecha de nacimiento", allergies: "alergias", conditions: "padecimientos",
+  notes: "notas", teeth: "odontograma", surfaces: "superficies", clinicalNotes: "notas clínicas", history: "historia clínica",
+  status: "estado", date: "fecha", start: "hora", items: "conceptos", discount: "descuento", amount: "monto", stock: "existencias",
+  treatment: "tratamiento", durationMin: "duración", price: "precio",
+};
+const accionStyle = { crear: "bg-brand-soft text-brand-dark", editar: "bg-[#E6EEF8] text-[#22508F]", eliminar: "bg-[#FBE3E0] text-[#9E2A20]" };
+
+/** Nombre legible del registro afectado, buscándolo en los datos actuales (o en la copia previa si se borró). */
+function recordLabel(db: DBType, e: AuditEntry): string {
+  const prev = (e.antes ?? {}) as Record<string, unknown>;
+  const patient = (id?: unknown) => db.patients.find((p) => p.id === id)?.name;
+  switch (e.coleccion) {
+    case "patients": return patient(e.registro_id) ?? (prev.name as string) ?? "Paciente eliminado";
+    case "appointments": { const a = db.appointments.find((x) => x.id === e.registro_id); return a ? `${patient(a.patientId) ?? ""} · ${fmtDate(a.date, { day: "numeric", month: "short" })} ${a.start}` : `${patient(prev.patientId) ?? "Cita"} (eliminada)`; }
+    case "payments": { const x = db.payments.find((y) => y.id === e.registro_id) ?? (prev as { amount?: number; patientId?: string }); return `${patient(x.patientId) ?? ""} · ${mxn(Number(x.amount ?? 0))}`; }
+    case "budgets": { const b = db.budgets.find((x) => x.id === e.registro_id); return b ? `Folio #${b.folio} · ${patient(b.patientId) ?? ""}` : `Folio #${prev.folio ?? "?"} (eliminado)`; }
+    case "prescriptions": { const r = db.prescriptions.find((x) => x.id === e.registro_id); return r ? `Receta #${r.folio} · ${patient(r.patientId) ?? ""}` : "Receta eliminada"; }
+    case "consents": { const c = db.consents.find((x) => x.id === e.registro_id); return c ? `${c.title} · ${patient(c.patientId) ?? ""}` : "Consentimiento eliminado"; }
+    case "materials": return db.materials.find((x) => x.id === e.registro_id)?.name ?? (prev.name as string) ?? "Material";
+    case "procedures": return db.procedures.find((x) => x.id === e.registro_id)?.name ?? (prev.name as string) ?? "Tratamiento";
+    default: return collLabel[e.coleccion] ?? e.coleccion;
+  }
+}
+
+function AuditPanel() {
+  const { db, clinic } = useStore();
+  const { toast } = useUI();
+  const [rows, setRows] = useState<AuditEntry[] | null>(null);
+  const [patientId, setPatientId] = useState("");
+  const [open, setOpen] = useState<number | null>(null);
+  useEffect(() => {
+    if (!clinic) return;
+    setRows(null);
+    loadAudit(clinic.id, { registroId: patientId || undefined, limit: 300 })
+      .then(setRows)
+      .catch((e) => { setRows([]); toast(/does not exist|relation/i.test(e.message) ? "La bitácora se activa al actualizar el esquema en Supabase." : e.message, "error"); });
+  }, [clinic, patientId, toast]);
+
+  return (
+    <section className="card">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold">Bitácora de cambios</h2>
+          <p className="text-sm text-muted">Registro automático de quién creó, modificó o eliminó información. No se puede editar ni borrar.</p>
+        </div>
+        <select aria-label="Filtrar por paciente" className="input w-auto min-w-[220px]" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
+          <option value="">Todos los cambios</option>
+          {[...db.patients].sort((a, b) => a.name.localeCompare(b.name)).map((p) => <option key={p.id} value={p.id}>Expediente de {p.name}</option>)}
+        </select>
+      </div>
+      {rows === null ? <p className="py-8 text-center text-sm text-muted">Cargando…</p> : rows.length ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[700px] text-sm">
+            <thead><tr><th className="th">Fecha</th><th className="th">Usuario</th><th className="th">Acción</th><th className="th">Registro</th><th className="th">Qué cambió</th></tr></thead>
+            <tbody>{rows.map((e) => (
+              <tr key={e.id} className="row-hover align-top">
+                <td className="td whitespace-nowrap text-muted">{new Date(e.fecha).toLocaleString("es-MX", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+                <td className="td font-semibold">{e.usuario_nombre ?? "—"}</td>
+                <td className="td"><span className={`badge ${accionStyle[e.accion]}`}>{e.accion === "crear" ? "Creó" : e.accion === "editar" ? "Editó" : "Eliminó"}</span></td>
+                <td className="td"><span className="text-xs text-muted">{collLabel[e.coleccion] ?? e.coleccion}</span><br />{recordLabel(db, e)}</td>
+                <td className="td">
+                  {e.campos?.length ? e.campos.map((c) => fieldLabel[c] ?? c).join(", ") : e.accion === "eliminar" ? "Registro completo" : "—"}
+                  {e.antes && (
+                    <button className="ml-2 text-xs font-semibold text-brand hover:underline" onClick={() => setOpen(open === e.id ? null : e.id)}>{open === e.id ? "Ocultar" : "Ver valor anterior"}</button>
+                  )}
+                  {open === e.id && <pre className="mt-2 max-h-48 overflow-auto rounded-lg bg-bg p-2 text-[11px] leading-snug">{JSON.stringify(e.antes, null, 2)}</pre>}
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      ) : <p className="py-8 text-center text-sm text-muted">Sin cambios registrados todavía.</p>}
+    </section>
   );
 }

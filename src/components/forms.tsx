@@ -266,7 +266,7 @@ export function ExpenseFormModal({ open, onClose, materialId }: { open: boolean;
 
 /* ---------------- Cerrar consulta: cobro + plan + inventario + nota ---------------- */
 export function CheckoutModal({ appt, onClose }: { appt?: Appointment; onClose: () => void }) {
-  const { db, update } = useStore();
+  const { db, update, profile } = useStore();
   const { toast } = useUI();
   const patient = db.patients.find((p) => p.id === appt?.patientId);
   const [procId, setProcId] = useState("");
@@ -324,7 +324,7 @@ export function CheckoutModal({ appt, onClose }: { appt?: Appointment; onClose: 
         budgets: d0.budgets.map((b) => ({ ...b, items: b.items.map((i) => doneItems.includes(i.id) ? { ...i, doneDate: t } : i) })),
         patients: d0.patients.map((p) => p.id === patient.id ? {
           ...p, teeth,
-          clinicalNotes: note.trim() ? [{ id: uid(), date: t, text: note.trim(), tooth: checked.find((i) => i.tooth)?.tooth }, ...p.clinicalNotes] : p.clinicalNotes,
+          clinicalNotes: note.trim() ? [{ id: uid(), date: t, text: note.trim(), tooth: checked.find((i) => i.tooth)?.tooth, author: profile?.nombre ?? d0.settings.doctorName, createdAt: new Date().toISOString() }, ...p.clinicalNotes] : p.clinicalNotes,
         } : p),
       };
       if (deduct) uses.forEach((u) => { d = consumeMaterials(d, u.procedureId, u.times); });

@@ -8,14 +8,14 @@ import type { Session } from "@supabase/supabase-js";
 import type { DB } from "./types";
 import { createSeed, DB_VERSION, seedProcedures } from "./mock-data";
 import { supabase } from "./supabase";
-import { applyRemote, cloudEnabled, diff, fullUpload, isAdmin as checkAdmin, license, loadDB, loadProfile, subscribe, SyncQueue, type Clinic, type Profile } from "./cloud";
+import { applyRemote, cloudEnabled, diff, fullUpload, isAdmin as checkAdmin, license, loadDB, loadProfile, overlayPending, readPending, subscribe, SyncQueue, type Clinic, type Profile, type SyncState } from "./cloud";
 import { useUI } from "@/components/ui";
 import { AuthScreen, CenterMessage, LicenseScreen, OnboardingScreen, RecoveryScreen, SetupScreen } from "@/components/AuthScreens";
 import AdminPanel from "@/components/AdminPanel";
 
 export const LOCAL_KEY = "odontologia-avanzada:db";
 export type Role = "doctor" | "recepcion";
-export type SyncState = "saved" | "saving" | "error";
+export type { SyncState };
 
 interface Ctx {
   db: DB;
@@ -136,7 +136,8 @@ function CloudStore({ children }: { children: React.ReactNode }) {
       if (!license(clinic).canUse) return setPhase("license");
       const remote = await loadDB(clinic.id);
       if (!remote) return setPhase(profile.rol === "doctor" ? "setup" : "empty");
-      const ready = migrate(remote);
+      // Cambios hechos sin conexión que aún no llegan a la nube: se vuelven a aplicar encima
+      const ready = overlayPending(migrate(remote), readPending(clinic.id, session.user.id));
       dbRef.current = ready; setDb(ready); setPhase("ready");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e)); setPhase("error");
@@ -148,19 +149,22 @@ function CloudStore({ children }: { children: React.ReactNode }) {
   // Cola de sincronización + tiempo real
   useEffect(() => {
     if (phase !== "ready" || !clinic || !userId) return;
-    const q = new SyncQueue(clinic.id, userId, (s, err) => {
+    const q = new SyncQueue(clinic.id, userId, (s, err, permanent) => {
       setSync(s);
-      if (s === "error") toast(`No se pudo guardar en la nube: ${err}`, "error");
+      // Los errores de conexión se reintentan solos; solo se avisa lo que requiere atención
+      if (permanent) toast(`No se pudo guardar un cambio: ${err}. Recarga la página.`, "error");
     });
     queue.current = q;
     const unsub = subscribe(clinic.id, userId, (ev) => {
       if (!dbRef.current) return;
-      dbRef.current = applyRemote(dbRef.current, ev);
+      const mine = ev.type === "upsert" ? q.pendingFor(ev.row.coleccion, ev.row.id) : q.pendingFor(ev.coleccion, ev.id);
+      dbRef.current = overlayPending(applyRemote(dbRef.current, ev), mine ? [mine] : []);
       setDb(dbRef.current);
     });
-    const warn = (e: BeforeUnloadEvent) => { if (q.pending) { q.flush(); e.preventDefault(); } };
+    // Lo pendiente ya está guardado en el navegador: al salir solo se intenta enviar
+    const warn = () => { if (q.pending) q.flush(); };
     window.addEventListener("beforeunload", warn);
-    return () => { unsub(); window.removeEventListener("beforeunload", warn); q.flush(); queue.current = null; };
+    return () => { unsub(); window.removeEventListener("beforeunload", warn); q.flush().finally(() => q.dispose()); queue.current = null; };
   }, [phase, clinic, userId, toast]);
 
   const update = useCallback((fn: (db: DB) => DB) => {
