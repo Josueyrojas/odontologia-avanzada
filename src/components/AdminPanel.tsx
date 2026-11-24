@@ -2,8 +2,8 @@
 // Panel de administración de Odonty: licencias de todas las clínicas.
 // Solo muestra datos de la clínica y conteos; nunca expedientes de pacientes.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Building2, CalendarClock, CheckCircle2, Clock, LogOut, PauseCircle, Pencil, RefreshCw, ShieldCheck } from "lucide-react";
-import { adminClinics, adminUpdateClinic, license, planLabel, type AdminClinic, type LicensePlan, type LicenseState } from "@/lib/cloud";
+import { ArrowLeft, Building2, CalendarClock, CheckCircle2, Clock, LogOut, PauseCircle, Pencil, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { adminClinics, adminDeleteClinic, adminUpdateClinic, license, planLabel, type AdminClinic, type LicensePlan, type LicenseState } from "@/lib/cloud";
 import { fmtDate, toISODate, today } from "@/lib/format";
 import { EmptyState, Modal, SearchInput, StatCard, useUI } from "./ui";
 import { Logo } from "./Logo";
@@ -133,7 +133,8 @@ function EditLicense({ clinic, onClose, onSaved }: { clinic: AdminClinic | null;
   const { toast, confirm } = useUI();
   const [f, setF] = useState<AdminClinic | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => setF(clinic), [clinic]);
+  const [confirmName, setConfirmName] = useState("");
+  useEffect(() => { setF(clinic); setConfirmName(""); }, [clinic]);
   if (!f) return null;
   // Las extensiones se suman al vencimiento actual si sigue vigente; si no, desde hoy
   const base = f.vence_el && f.vence_el > today() ? f.vence_el : today();
@@ -145,6 +146,17 @@ function EditLicense({ clinic, onClose, onSaved }: { clinic: AdminClinic | null;
     try {
       await adminUpdateClinic(f);
       toast(`${f.nombre}: licencia actualizada`);
+      onSaved();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await adminDeleteClinic(f.id, confirmName);
+      toast(`${f.nombre} eliminada`, "info");
       onSaved();
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
@@ -179,6 +191,20 @@ function EditLicense({ clinic, onClose, onSaved }: { clinic: AdminClinic | null;
           <span className="text-xs font-normal text-muted">Tras vencer tiene 5 días de gracia; después se bloquea el acceso (los datos se conservan).</span>
         </div>
         <label className="label">Notas internas<textarea className="input min-h-[70px]" value={f.notas ?? ""} onChange={(e) => setF({ ...f, notas: e.target.value })} placeholder="Ej. Enganche pagado 10/11, mensualidad día 10…" /></label>
+
+        <details className="rounded-2xl border border-[#F5C9C3] p-4">
+          <summary className="cursor-pointer text-sm font-bold text-[#9E2A20]">Eliminar clínica</summary>
+          <p className="mt-2 text-sm text-muted">
+            Borra la clínica con <b>todos</b> sus datos: {f.pacientes} pacientes, citas, pagos y expedientes, y quita el acceso a sus {f.usuarios} usuarios.
+            No se puede deshacer. Para suspender sin borrar, usa el estado &quot;suspendida&quot;.
+          </p>
+          <label className="label mt-3">Escribe <span className="font-mono">{f.nombre}</span> para confirmar
+            <input className="input" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} autoComplete="off" />
+          </label>
+          <button type="button" className="btn-danger mt-3 w-full" disabled={busy || confirmName.trim().toLowerCase() !== f.nombre.trim().toLowerCase()} onClick={remove}>
+            <Trash2 size={16} /> Eliminar definitivamente
+          </button>
+        </details>
       </div>
     </Modal>
   );

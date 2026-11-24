@@ -80,10 +80,11 @@ export interface Appointment {
   status: AppointmentStatus;
   notes?: string;
   arrivedAt?: string;
+  professionalId?: string;   // quién atiende
 }
 
 export type PaymentMethod = "efectivo" | "tarjeta" | "transferencia";
-export interface Payment { id: string; patientId: string; budgetId?: string; amount: number; method: PaymentMethod; date: string; concept: string; }
+export interface Payment { id: string; patientId: string; budgetId?: string; amount: number; method: PaymentMethod; date: string; concept: string; folio?: number; }
 
 export interface Material {
   id: string; name: string; category: string; stock: number; unit: string; alertLevel: number; lastCost: number;
@@ -93,10 +94,15 @@ export interface Expense {
   materialId?: string; qty?: number; notes?: string;
 }
 
+/** Dentista o especialista que atiende citas (puede no tener cuenta en el sistema). */
+export interface Professional { id: string; name: string; color: string; commissionPct?: number; active?: boolean; }
+
 export interface Settings {
   clinicName: string; doctorName: string; specialty: string; license: string;
   phone: string; address: string; email: string;
   startHour: number; endHour: number; workDays: number; // 5 = lun-vie, 6 = lun-sáb
+  professionals?: Professional[];
+  rfc?: string;          // aparece en los recibos
 }
 
 export interface DB {

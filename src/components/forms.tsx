@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Modal, useUI } from "./ui";
 import { apptLabel, expenseCategories, methodLabel } from "./status";
-import { budgetTotals, consumeMaterials, paidForBudget, useCollection, useStore } from "@/lib/store";
+import { activeProfessionals, budgetTotals, consumeMaterials, nextReceiptFolio, paidForBudget, useCollection, useStore } from "@/lib/store";
 import { fmtQty, fromMin, mxn, today, toMin, uid } from "@/lib/format";
 import type { Appointment, AppointmentStatus, Patient, Payment, PaymentMethod } from "@/lib/types";
 
@@ -56,16 +56,20 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
   const appts = useCollection("appointments");
   const { toast, confirm } = useUI();
   const [newPatient, setNewPatient] = useState(false);
+  const pros = activeProfessionals(db.settings);
   const blank = (): Appointment => ({
     id: "", patientId: db.patients[0]?.id ?? "", procedureId: db.procedures[0]?.id, treatment: db.procedures[0]?.name ?? "",
-    date: today(), start: "09:00", durationMin: db.procedures[0]?.durationMin ?? 30, status: "pendiente", notes: "", ...defaults,
+    date: today(), start: "09:00", durationMin: db.procedures[0]?.durationMin ?? 30, status: "pendiente", notes: "",
+    professionalId: pros.length > 1 ? pros[0].id : undefined, ...defaults,
   });
   const [f, setF] = useState<Appointment>(appt ?? blank());
   useEffect(() => { if (open) setF(appt ?? blank()); }, [open, appt]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = <K extends keyof Appointment>(k: K, v: Appointment[K]) => setF((x) => ({ ...x, [k]: v }));
 
+  // Solo cuenta como empalme si es el mismo profesional (o alguna de las dos citas no tiene asignado)
   const overlap = db.appointments.find((a) =>
     a.id !== f.id && a.date === f.date && a.status !== "cancelada" &&
+    (!a.professionalId || !f.professionalId || a.professionalId === f.professionalId) &&
     toMin(a.start) < toMin(f.start) + f.durationMin && toMin(f.start) < toMin(a.start) + a.durationMin);
 
   const slots: string[] = [];
@@ -102,6 +106,18 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
               {[...db.patients].sort((a, b) => a.name.localeCompare(b.name)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
+          {pros.length > 1 && (
+            <div className="label sm:col-span-2">Atiende
+              <div className="flex flex-wrap gap-2">
+                {pros.map((pr) => (
+                  <button type="button" key={pr.id} onClick={() => set("professionalId", pr.id)}
+                    className={`btn btn-sm border ${f.professionalId === pr.id ? "border-navy bg-navy text-white" : "border-line bg-surface hover:bg-bg"}`}>
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: pr.color }} /> {pr.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <label className="label sm:col-span-2">Tratamiento
             <select className="input" value={f.procedureId ?? ""} onChange={(e) => {
               const p = db.procedures.find((x) => x.id === e.target.value);
@@ -142,7 +158,7 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
 }
 
 /* ---------------- Pago ---------------- */
-export function PaymentFormModal({ open, onClose, patientId, budgetId }: { open: boolean; onClose: () => void; patientId?: string; budgetId?: string }) {
+export function PaymentFormModal({ open, onClose, patientId, budgetId, onSaved }: { open: boolean; onClose: () => void; patientId?: string; budgetId?: string; onSaved?: (p: Payment) => void }) {
   const { db } = useStore();
   const payments = useCollection("payments");
   const { toast } = useUI();
@@ -161,7 +177,9 @@ export function PaymentFormModal({ open, onClose, patientId, budgetId }: { open:
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!f.patientId || f.amount <= 0) return toast("Indica paciente y monto", "error");
-    payments.add({ ...f, id: `pay${uid()}`, concept: f.concept || "Pago de tratamiento", budgetId: f.budgetId || undefined });
+    const saved: Payment = { ...f, id: `pay${uid()}`, folio: nextReceiptFolio(db), concept: f.concept || "Pago de tratamiento", budgetId: f.budgetId || undefined };
+    payments.add(saved);
+    onSaved?.(saved);
     toast(`Pago de ${mxn(f.amount)} registrado`);
     onClose();
   };
@@ -329,7 +347,7 @@ export function CheckoutModal({ appt, onClose }: { appt?: Appointment; onClose: 
       };
       if (deduct) uses.forEach((u) => { d = consumeMaterials(d, u.procedureId, u.times); });
       if (charge && amount > 0) {
-        d = { ...d, payments: [{ id: `pay${uid()}`, patientId: patient.id, budgetId: budgetId || undefined, amount, method, date: t, concept: proc?.name ?? appt.treatment }, ...d.payments] };
+        d = { ...d, payments: [{ id: `pay${uid()}`, folio: nextReceiptFolio(d), patientId: patient.id, budgetId: budgetId || undefined, amount, method, date: t, concept: proc?.name ?? appt.treatment }, ...d.payments] };
       }
       return d;
     });

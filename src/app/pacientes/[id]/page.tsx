@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, CalendarPlus, CircleDollarSign, FilePlus2, FileText, HeartPulse, Mail, MessageCircle, Pencil, PenLine, Phone, Pill, Plus, Printer, ShieldAlert, StickyNote, Trash2, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarPlus, CircleDollarSign, FilePlus2, FileText, HeartPulse, Mail, MessageCircle, Pencil, PenLine, Phone, Pill, Receipt, Plus, Printer, ShieldAlert, StickyNote, Trash2, Users } from "lucide-react";
 import Odontogram, { statusLabel, ToothStatusPicker } from "@/components/Odontogram";
 import SurfaceOdontogram, { findingLabel, surfaceSummary } from "@/components/SurfaceOdontogram";
 import { Avatar, EmptyState, StatCard, Tabs, useUI } from "@/components/ui";
@@ -12,7 +12,8 @@ import { activeRisks, isCritical, MedicalHistoryForm, PrescriptionModal, Prescri
 import { apptBadge, apptLabel, budgetBadge, budgetLabel, methodLabel } from "@/components/status";
 import { budgetTotals, nextFolio, paidForBudget, patientBalance, useCollection, useStore } from "@/lib/store";
 import { age, fmtDate, mxn, today, uid, whatsappLink } from "@/lib/format";
-import type { Appointment, Consent, Prescription, ToothStatus } from "@/lib/types";
+import type { Appointment, Consent, Payment, Prescription, ToothStatus } from "@/lib/types";
+import { ReceiptModal, receiptFolio } from "@/components/Receipt";
 
 type Tab = "odontograma" | "historia" | "citas" | "presupuestos" | "pagos" | "notas" | "recetas" | "consentimientos";
 
@@ -32,6 +33,7 @@ export default function PacienteDetalle() {
   const [note, setNote] = useState("");
   const [noteTooth, setNoteTooth] = useState("");
   const [rxOpen, setRxOpen] = useState(false);
+  const [receipt, setReceipt] = useState<Payment | null>(null);
   const [printRx, setPrintRx] = useState<Prescription | null>(null);
   const [csOpen, setCsOpen] = useState(false);
   const [printCs, setPrintCs] = useState<Consent | null>(null);
@@ -244,9 +246,10 @@ export default function PacienteDetalle() {
           <div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-bold">Pagos recibidos</h2><button className="btn-primary btn-sm" onClick={() => setModal("pago")}><Plus size={14} /> Registrar pago</button></div>
           {myPayments.length ? (
             <div className="overflow-x-auto"><table className="w-full min-w-[480px] text-sm">
-              <thead><tr><th className="th">Fecha</th><th className="th">Concepto</th><th className="th">Método</th><th className="th text-right">Monto</th></tr></thead>
+              <thead><tr><th className="th">Fecha</th><th className="th">Recibo</th><th className="th">Concepto</th><th className="th">Método</th><th className="th text-right">Monto</th><th className="th" /></tr></thead>
               <tbody>{myPayments.map((x) => (
-                <tr key={x.id}><td className="td">{fmtDate(x.date)}</td><td className="td">{x.concept}</td><td className="td text-muted">{methodLabel[x.method]}</td><td className="td text-right font-bold text-brand-dark">{mxn(x.amount)}</td></tr>
+                <tr key={x.id}><td className="td">{fmtDate(x.date)}</td><td className="td font-mono text-xs text-muted">{receiptFolio(x)}</td><td className="td">{x.concept}</td><td className="td text-muted">{methodLabel[x.method]}</td><td className="td text-right font-bold text-brand-dark">{mxn(x.amount)}</td>
+                  <td className="td text-right"><button className="btn-outline btn-sm" onClick={() => setReceipt(x)}><Receipt size={14} /> Recibo</button></td></tr>
               ))}</tbody>
             </table></div>
           ) : <EmptyState icon={CircleDollarSign} title="Sin pagos registrados" />}
@@ -336,7 +339,8 @@ export default function PacienteDetalle() {
       <PrescriptionModal open={rxOpen} onClose={() => setRxOpen(false)} patient={p} onSaved={print} />
       <PatientFormModal open={modal === "editar"} onClose={() => setModal(null)} patient={p} />
       <AppointmentFormModal open={modal === "cita"} onClose={() => setModal(null)} appt={editAppt} defaults={{ patientId: p.id }} />
-      <PaymentFormModal open={modal === "pago"} onClose={() => setModal(null)} patientId={p.id} />
+      <PaymentFormModal open={modal === "pago"} onClose={() => setModal(null)} patientId={p.id} onSaved={setReceipt} />
+      <ReceiptModal payment={receipt} onClose={() => setReceipt(null)} />
     </>
   );
 }

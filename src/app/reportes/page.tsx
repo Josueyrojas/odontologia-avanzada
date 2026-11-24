@@ -5,7 +5,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { Activity, CalendarCheck, CalendarX, Clock, Download, UserPlus } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import { Avatar, StatCard } from "@/components/ui";
-import { budgetTotals, useStore } from "@/lib/store";
+import { budgetTotals, professionalsOf, useStore } from "@/lib/store";
 import { addDays, downloadCSV, monthKey, mxn, parseDate, shortMonth, toISODate, today, toMin } from "@/lib/format";
 
 type Period = "mes" | "3m" | "12m";
@@ -34,6 +34,15 @@ export default function ReportesPage() {
       const hours = (n * p.durationMin) / 60;
       return { id: p.id, name: p.name, color: p.color ?? "#9FB4C9", n, revenue, cost, profit: revenue - cost, perHour: hours ? (revenue - cost) / hours : 0 };
     }).filter((x) => x.n).sort((a, b) => b.profit - a.profit);
+
+    // Productividad por profesional (las citas sin asignar cuentan para el primero)
+    const pros = professionalsOf(db.settings);
+    const byPro = pros.map((pr) => {
+      const mine = done.filter((a) => (pros.find((x) => x.id === a.professionalId) ?? pros[0]).id === pr.id);
+      let revenue = 0, cost = 0, minutes = 0;
+      mine.forEach((a) => { const pc = db.procedures.find((x) => x.id === a.procedureId); revenue += pc?.price ?? 0; cost += pc?.materialCost ?? 0; minutes += a.durationMin; });
+      return { ...pr, n: mine.length, patients: new Set(mine.map((a) => a.patientId)).size, revenue, profit: revenue - cost, hours: minutes / 60, commission: revenue * (pr.commissionPct ?? 0) / 100 };
+    }).filter((x) => x.n || x.active !== false);
 
     // Mapa de calor día × hora
     const { startHour, endHour, workDays } = db.settings;
@@ -78,7 +87,7 @@ export default function ReportesPage() {
       done: done.length, cancelled, noShow, total: appts.length, pastScheduled: pastScheduled.length,
       income: paysIn.reduce((s, p) => s + p.amount, 0), newPatients: db.patients.filter((p) => inRange(p.createdAt)).length,
       occupancy: available ? Math.min(100, Math.round((booked / available) * 100)) : 0, bookedHours: Math.round(booked / 60),
-      byProc, hours, heat, heatMax, newByMonth, recurring, attended: visitsBy.size, top, funnel, progress,
+      byProc, byPro, hours, heat, heatMax, newByMonth, recurring, attended: visitsBy.size, top, funnel, progress,
     };
   }, [db, period, t]);
 
@@ -105,6 +114,29 @@ export default function ReportesPage() {
         <StatCard label="Pacientes nuevos" value={String(r.newPatients)} icon={UserPlus} note={`${r.recurring} regresaron más de una vez`} />
         <StatCard label="Ingresos del periodo" value={mxn(r.income)} icon={Activity} tone="green" />
       </div>
+
+      {r.byPro.length > 1 && (
+        <section className="card mb-5">
+          <h2 className="text-lg font-bold">Productividad por profesional</h2>
+          <p className="mb-4 text-sm text-muted">Consultas completadas en el periodo, valuadas con los precios del catálogo.</p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead><tr><th className="th">Profesional</th><th className="th text-right">Consultas</th><th className="th text-right">Pacientes</th><th className="th text-right">Horas</th><th className="th text-right">Ingreso generado</th><th className="th text-right">Utilidad</th><th className="th text-right">Comisión</th></tr></thead>
+              <tbody>{r.byPro.map((x) => (
+                <tr key={x.id} className="row-hover">
+                  <td className="td"><span className="flex items-center gap-2 font-semibold"><span className="h-3 w-3 rounded-full" style={{ background: x.color }} />{x.name}</span></td>
+                  <td className="td text-right">{x.n}</td>
+                  <td className="td text-right">{x.patients}</td>
+                  <td className="td text-right">{x.hours.toFixed(1)}</td>
+                  <td className="td text-right font-bold">{mxn(x.revenue)}</td>
+                  <td className="td text-right text-brand-dark">{mxn(x.profit)}</td>
+                  <td className="td text-right">{x.commissionPct ? <>{mxn(x.commission)} <span className="text-xs text-muted">({x.commissionPct}%)</span></> : <span className="text-muted">—</span>}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <section className="card mb-5">
         <h2 className="text-lg font-bold">Rentabilidad por tratamiento</h2>

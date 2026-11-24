@@ -3,9 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { Building2, Clock, Copy, Database, Download, Pencil, Plus, RefreshCw, RotateCcw, Save, Stethoscope, Trash2, Upload, UserMinus, Users } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import { Avatar, Modal, Tabs, useUI } from "@/components/ui";
-import { useCollection, useStore } from "@/lib/store";
+import { professionalsOf, useCollection, useStore } from "@/lib/store";
 import { fmtDate, mxn, today, uid } from "@/lib/format";
-import type { DB, Procedure, ProcedureMaterial, Settings } from "@/lib/types";
+import type { DB, Procedure, ProcedureMaterial, Professional, Settings } from "@/lib/types";
 import { listTeam, loadAudit, removeMember, renewCode, setRole, type AuditEntry, type Profile } from "@/lib/cloud";
 import type { DB as DBType } from "@/lib/types";
 
@@ -82,6 +82,7 @@ export default function ConfiguracionPage() {
             <label className="label">Teléfono<input className="input" value={s.phone} onChange={(e) => set("phone", e.target.value)} /></label>
             <label className="label">Correo<input className="input" type="email" value={s.email} onChange={(e) => set("email", e.target.value)} /></label>
             <label className="label">Dirección<input className="input" value={s.address} onChange={(e) => set("address", e.target.value)} /></label>
+            <label className="label">RFC (para recibos)<input className="input uppercase" value={s.rfc ?? ""} onChange={(e) => set("rfc", e.target.value.toUpperCase())} placeholder="Opcional" /></label>
           </section>
           <section className="card flex flex-col gap-4">
             <h2 className="flex items-center gap-2 text-lg font-bold"><Clock size={20} className="text-brand" /> Horario de atención</h2>
@@ -106,6 +107,7 @@ export default function ConfiguracionPage() {
             </div>
             <button className="btn-primary"><Save size={18} /> Guardar cambios</button>
           </section>
+          <ProfessionalsEditor value={professionalsOf(s)} onChange={(professionals) => set("professionals", professionals)} />
         </form>
       )}
 
@@ -365,6 +367,44 @@ function AuditPanel() {
           </table>
         </div>
       ) : <p className="py-8 text-center text-sm text-muted">Sin cambios registrados todavía.</p>}
+    </section>
+  );
+}
+
+/* ---------------- Profesionales ---------------- */
+const proColors = ["#12A36A", "#3A7BD5", "#7B61FF", "#E8893A", "#D9483B", "#0F2A44", "#F2B33D", "#0E9AA7"];
+function ProfessionalsEditor({ value, onChange }: { value: Professional[]; onChange: (v: Professional[]) => void }) {
+  const setRow = (i: number, ch: Partial<Professional>) => onChange(value.map((p, j) => (j === i ? { ...p, ...ch } : p)));
+  const add = () => onChange([...value, { id: `pr${uid()}`, name: "", color: proColors[value.length % proColors.length] }]);
+  return (
+    <section className="card flex flex-col gap-4 xl:col-span-2">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-bold"><Stethoscope size={20} className="text-brand" /> Profesionales que atienden</h2>
+          <p className="text-sm text-muted">Con dos o más, la agenda se puede filtrar por doctor y los reportes muestran la productividad y comisión de cada uno.</p>
+        </div>
+        <button type="button" className="btn-outline" onClick={add}><Plus size={18} /> Agregar profesional</button>
+      </div>
+      <div className="flex flex-col gap-2">
+        {value.map((p, i) => (
+          <div key={p.id} className={`flex flex-wrap items-center gap-3 rounded-2xl border border-line p-3 ${p.active === false ? "opacity-60" : ""}`}>
+            <div className="flex gap-1">
+              {proColors.map((c) => (
+                <button type="button" key={c} aria-label={`Color ${c}`} onClick={() => setRow(i, { color: c })}
+                  className={`h-6 w-6 rounded-full ring-offset-2 ${p.color === c ? "ring-2 ring-navy" : ""}`} style={{ background: c }} />
+              ))}
+            </div>
+            <input aria-label="Nombre" required className="input min-h-[38px] min-w-[180px] flex-1" placeholder="Dr. Nombre Apellido" value={p.name} onChange={(e) => setRow(i, { name: e.target.value })} />
+            <label className="flex items-center gap-2 text-sm text-muted">Comisión
+              <input aria-label="Comisión %" type="number" min={0} max={100} className="input min-h-[38px] w-20" value={p.commissionPct ?? ""} placeholder="0" onChange={(e) => setRow(i, { commissionPct: e.target.value === "" ? undefined : Math.min(100, Math.max(0, +e.target.value)) })} />%
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="checkbox" className="h-4 w-4 accent-brand" checked={p.active !== false} onChange={(e) => setRow(i, { active: e.target.checked ? undefined : false })} /> Activo
+            </label>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-muted">Para que alguien deje de aparecer en la agenda, desmárcalo como activo: sus citas anteriores conservan su nombre. Guarda con el botón &quot;Guardar cambios&quot;.</p>
     </section>
   );
 }

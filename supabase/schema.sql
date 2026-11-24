@@ -171,6 +171,20 @@ begin
   on conflict (clinica_id) do update set notas = excluded.notas, updated_at = now();
 end $$;
 
+-- Elimina una clínica con todos sus datos. Exige escribir el nombre exacto como confirmación.
+create or replace function public.admin_eliminar_clinica(p_id uuid, p_confirmacion text) returns void
+language plpgsql security definer set search_path = public as $$
+declare nom text;
+begin
+  if not es_admin() then raise exception 'No autorizado'; end if;
+  select nombre into nom from clinicas where id = p_id;
+  if nom is null then raise exception 'La clínica no existe'; end if;
+  if lower(trim(nom)) <> lower(trim(p_confirmacion)) then raise exception 'El nombre no coincide'; end if;
+  delete from clinicas where id = p_id;
+end $$;
+revoke all on function public.admin_eliminar_clinica(uuid, text) from public, anon;
+grant execute on function public.admin_eliminar_clinica(uuid, text) to authenticated;
+
 revoke all on function public.admin_clinicas() from public, anon;
 revoke all on function public.admin_actualizar_clinica(uuid, text, text, date, text) from public, anon;
 revoke all on function public.es_admin() from anon;

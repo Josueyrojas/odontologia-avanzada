@@ -1,14 +1,15 @@
 "use client";
 import { useMemo, useState } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Calculator, ChevronLeft, ChevronRight, CircleDollarSign, Download, Printer, Receipt, Trash2, TrendingDown, TrendingUp, Wallet } from "lucide-react";
+import { Calculator, ChevronLeft, ChevronRight, CircleDollarSign, Download, Printer, Receipt, ReceiptText, Trash2, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import { Modal, StatCard, Tabs, useUI } from "@/components/ui";
 import { ExpenseFormModal, PaymentFormModal } from "@/components/forms";
 import { methodLabel } from "@/components/status";
 import { useCollection, useStore } from "@/lib/store";
 import { downloadCSV, fmtDate, fmtLong, monthKey, monthName, mxn, shortMonth, today } from "@/lib/format";
-import type { PaymentMethod } from "@/lib/types";
+import type { Payment, PaymentMethod } from "@/lib/types";
+import { ReceiptModal } from "@/components/Receipt";
 
 const COLORS = ["#0F2A44", "#12A36A", "#3A7BD5", "#9ADBC0", "#E8893A", "#7B61FF", "#F2B33D", "#9FB4C9"];
 const tip = { contentStyle: { borderRadius: 12, border: "1px solid #E4EBF2" }, formatter: (v: number) => mxn(v) };
@@ -22,6 +23,7 @@ export default function FinanzasPage() {
   const [month, setMonth] = useState(monthKey(today()));
   const [tab, setTab] = useState<"ingresos" | "egresos">("ingresos");
   const [modal, setModal] = useState<"pago" | "egreso" | "corte" | null>(null);
+  const [receipt, setReceipt] = useState<Payment | null>(null);
   const name = (id: string) => db.patients.find((p) => p.id === id)?.name ?? "—";
 
   const data = useMemo(() => {
@@ -177,7 +179,10 @@ export default function FinanzasPage() {
               <thead className="sticky top-0 bg-surface"><tr><th className="th">Fecha</th><th className="th">Paciente</th><th className="th">Concepto</th><th className="th">Método</th><th className="th text-right">Monto</th><th className="th print:hidden" /></tr></thead>
               <tbody>{data.inc.map((p) => (
                 <tr key={p.id} className="row-hover"><td className="td">{fmtDate(p.date)}</td><td className="td font-semibold">{name(p.patientId)}</td><td className="td">{p.concept}</td><td className="td text-muted">{methodLabel[p.method]}</td><td className="td text-right font-bold text-brand-dark">{mxn(p.amount)}</td>
-                  <td className="td text-right print:hidden"><button className="icon-btn hover:text-danger" aria-label="Eliminar" onClick={() => delPayment(p.id)}><Trash2 size={15} /></button></td></tr>
+                  <td className="td text-right print:hidden"><div className="flex justify-end gap-1">
+                    <button className="icon-btn" aria-label="Recibo" title="Recibo" onClick={() => setReceipt(p)}><ReceiptText size={15} /></button>
+                    <button className="icon-btn hover:text-danger" aria-label="Eliminar" onClick={() => delPayment(p.id)}><Trash2 size={15} /></button>
+                  </div></td></tr>
               ))}</tbody>
             </table>
           ) : (
@@ -195,6 +200,7 @@ export default function FinanzasPage() {
       <PaymentFormModal open={modal === "pago"} onClose={() => setModal(null)} />
       <ExpenseFormModal open={modal === "egreso"} onClose={() => setModal(null)} />
       <CashCutModal open={modal === "corte"} onClose={() => setModal(null)} />
+      <ReceiptModal payment={receipt} onClose={() => setReceipt(null)} />
     </>
   );
 }

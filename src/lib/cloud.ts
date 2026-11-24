@@ -92,6 +92,11 @@ export async function loadAudit(clinicaId: string, opts: { registroId?: string; 
   return data as AuditEntry[];
 }
 
+export async function adminDeleteClinic(id: string, confirmacion: string) {
+  const { error } = await sb().rpc("admin_eliminar_clinica", { p_id: id, p_confirmacion: confirmacion });
+  if (error) throw error;
+}
+
 export async function renewCode(): Promise<string> {
   const { data, error } = await sb().rpc("renovar_codigo");
   if (error) throw error;

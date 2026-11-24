@@ -146,6 +146,24 @@ function CloudStore({ children }: { children: React.ReactNode }) {
   const userId = session?.user.id;
   useEffect(() => { if (userId && phase !== "recovery") load(); }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Revisa la licencia cada 10 minutos y al volver a la pestaña: si se suspende o vence, se bloquea sin recargar
+  useEffect(() => {
+    if (phase !== "ready" || !userId) return;
+    const check = async () => {
+      try {
+        const { clinic: fresh } = await loadProfile(userId);
+        if (!fresh) return;
+        if (!license(fresh).canUse) { await queue.current?.flush(); setClinic(fresh); setPhase("license"); return; }
+        // Solo se actualiza si cambió algo (evita reiniciar la sincronización en cada revisión)
+        setClinic((c) => c && c.estado === fresh.estado && c.vence_el === fresh.vence_el && c.nombre === fresh.nombre && c.codigo === fresh.codigo ? c : fresh);
+      } catch { /* sin conexión: se revisa en la siguiente vuelta */ }
+    };
+    const timer = setInterval(check, 10 * 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, [phase, userId]);
+
   // Cola de sincronización + tiempo real
   useEffect(() => {
     if (phase !== "ready" || !clinic || !userId) return;
@@ -273,5 +291,11 @@ export const consumeMaterials = (d: DB, procedureId: string | undefined, times =
   };
 };
 
+/** Profesionales de la clínica. Si no se han configurado, el doctor de la configuración. */
+export const professionalsOf = (s: DB["settings"]) =>
+  s.professionals?.length ? s.professionals : [{ id: "principal", name: s.doctorName, color: "#12A36A" }];
+export const activeProfessionals = (s: DB["settings"]) => professionalsOf(s).filter((p) => p.active !== false);
+
+export const nextReceiptFolio = (db: DB) => Math.max(0, ...db.payments.map((p) => p.folio ?? 0)) + 1;
 export const nextConsentFolio = (db: DB) => Math.max(0, ...db.consents.map((c) => c.folio)) + 1;
 export const nextRxFolio = (db: DB) => Math.max(0, ...db.prescriptions.map((r) => r.folio)) + 1;

@@ -7,7 +7,7 @@ import { Avatar, EmptyState, useUI } from "@/components/ui";
 import { AppointmentFormModal, CheckoutModal } from "@/components/forms";
 import { activeRisks, riskLabel } from "@/components/clinical";
 import { apptBadge, apptBlock, apptLabel } from "@/components/status";
-import { useCollection, useStore } from "@/lib/store";
+import { professionalsOf, useCollection, useStore } from "@/lib/store";
 import { addDays, fmtDate, fmtLong, fromMin, nowTime, parseDate, startOfWeek, toMin, today, whatsappLink } from "@/lib/format";
 import type { Appointment, AppointmentStatus } from "@/lib/types";
 
@@ -22,6 +22,7 @@ export default function AgendaPage() {
   const [modal, setModal] = useState<{ appt?: Appointment; defaults?: Partial<Appointment> } | null>(null);
   const [checkout, setCheckout] = useState<Appointment | undefined>();
   const [filter, setFilter] = useState<AppointmentStatus | "todas">("todas");
+  const [pro, setPro] = useState<string>("todos");
   const [now, setNow] = useState(nowTime());
   useEffect(() => { const i = setInterval(() => setNow(nowTime()), 60000); return () => clearInterval(i); }, []);
   useEffect(() => { if (window.innerWidth < 768) setView("dia"); }, []);
@@ -39,9 +40,14 @@ export default function AgendaPage() {
     if (!p) return "";
     return [p.allergies && `Alergia: ${p.allergies}`, ...activeRisks(p).map((k) => riskLabel[k])].filter(Boolean).join(" · ");
   };
-  const visible = (a: Appointment) => filter === "todas" || a.status === filter;
+  const pros = professionalsOf(db.settings);
+  const multi = pros.length > 1;
+  // Las citas sin profesional asignado (anteriores a tener varios) cuentan como del primero
+  const proOf = (a: Appointment) => pros.find((x) => x.id === a.professionalId) ?? pros[0];
+  const byPro = (a: Appointment) => pro === "todos" || proOf(a).id === pro;
+  const visible = (a: Appointment) => (filter === "todas" || a.status === filter) && byPro(a);
 
-  const dayList = db.appointments.filter((a) => a.date === day).sort((a, b) => a.start.localeCompare(b.start));
+  const dayList = db.appointments.filter((a) => a.date === day && byPro(a)).sort((a, b) => a.start.localeCompare(b.start));
   const shift = (n: number) => setDay(addDays(day, view === "semana" ? n * 7 : n));
   const kicker = view === "semana"
     ? `Semana del ${fmtDate(days[0], { day: "numeric", month: "short" })} al ${fmtDate(days[days.length - 1], { day: "numeric", month: "short", year: "numeric" })}`
@@ -82,11 +88,22 @@ export default function AgendaPage() {
         <button className="btn-outline" onClick={() => setDay(t)}>Hoy</button>
         <button className="btn-outline px-3" aria-label="Siguiente" onClick={() => shift(1)}><ChevronRight size={18} /></button>
         <input type="date" aria-label="Ir a fecha" className="input w-auto" value={day} onChange={(e) => e.target.value && setDay(e.target.value)} />
-        <button className="btn-primary" onClick={() => setModal({ defaults: { date: day } })}><Plus size={18} /> Nueva cita</button>
+        <button className="btn-primary" onClick={() => setModal({ defaults: { ...(pro !== "todos" ? { professionalId: pro } : {}), date: day } })}><Plus size={18} /> Nueva cita</button>
       </PageHeader>
 
       <div className="grid gap-5 xl:grid-cols-[3fr_1.1fr]">
         <section className="card overflow-x-auto !p-4 md:!p-6">
+          {multi && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-bold uppercase tracking-wider text-muted">Profesional</span>
+              <button onClick={() => setPro("todos")} className={`badge border ${pro === "todos" ? "border-navy bg-navy text-white" : "border-line bg-surface"}`}>Todos</button>
+              {pros.map((x) => (
+                <button key={x.id} onClick={() => setPro(pro === x.id ? "todos" : x.id)} className={`badge border ${pro === x.id ? "border-navy bg-navy text-white" : "border-line bg-surface"}`}>
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: x.color }} /> {x.name}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="mb-4 flex flex-wrap gap-2 text-xs">
             <button onClick={() => setFilter("todas")} className={`badge border ${filter === "todas" ? "border-navy bg-navy text-white" : "border-line bg-surface"}`}>Todas</button>
             {(Object.keys(apptLabel) as AppointmentStatus[]).map((s) => (
@@ -119,7 +136,7 @@ export default function AgendaPage() {
                 <div key={d} className={`relative border-l border-line ${d === t ? "bg-brand-soft/30" : ""}`} style={{ height: slots * ROW_PX }}>
                   {Array.from({ length: slots }).map((_, i) => (
                     <button key={i} aria-label={`Agendar ${fmtDate(d)} ${fromMin(startHour * 60 + i * SLOT)}`}
-                      onClick={() => setModal({ defaults: { date: d, start: fromMin(startHour * 60 + i * SLOT) } })}
+                      onClick={() => setModal({ defaults: { ...(pro !== "todos" ? { professionalId: pro } : {}), date: d, start: fromMin(startHour * 60 + i * SLOT) } })}
                       className={`group block w-full border-t text-left ${i % 2 ? "border-bg" : "border-line"} hover:bg-brand-soft`} style={{ height: ROW_PX }}>
                       <span className="hidden pl-2 text-[11px] font-bold text-brand group-hover:inline">+ {fromMin(startHour * 60 + i * SLOT)}</span>
                     </button>
@@ -137,7 +154,10 @@ export default function AgendaPage() {
                       <button key={a.id} onClick={() => setModal({ appt: a })}
                         className={`absolute z-10 overflow-hidden rounded-lg px-2.5 py-1.5 text-left text-xs transition hover:z-30 hover:shadow-lg ${apptBlock[a.status]}`}
                         style={{ top: top + 2, height: Math.max(h, 24), left: `calc(${(col / cols) * 100}% + 4px)`, width: `calc(${100 / cols}% - 8px)` }}>
-                        <p className="truncate font-bold">{name(a.patientId)}</p>
+                        <p className="flex items-center gap-1 truncate font-bold">
+                          {multi && proOf(a) && <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: proOf(a)!.color }} title={proOf(a)!.name} />}
+                          {name(a.patientId)}
+                        </p>
                         {h > 30 && <p className="truncate text-ink-soft">{a.start} · {a.treatment}</p>}
                       </button>
                     );
@@ -161,6 +181,7 @@ export default function AgendaPage() {
                   <p className="flex items-center gap-1 truncate text-sm font-bold">{name(a.patientId)}{alerts(a.patientId) && <ShieldAlert size={14} className="shrink-0 text-danger" aria-label="Alerta médica" />}</p>
                   {alerts(a.patientId) && <p className="truncate text-[11px] font-semibold text-danger">{alerts(a.patientId)}</p>}
                   <p className="text-xs text-muted">{a.start} – {fromMin(toMin(a.start) + a.durationMin)} · {a.treatment}</p>
+                  {multi && proOf(a) && <p className="flex items-center gap-1 text-xs font-semibold text-ink-soft"><span className="h-2 w-2 rounded-full" style={{ background: proOf(a)!.color }} />{proOf(a)!.name}</p>}
                 </button>
                 <span className={`badge ${apptBadge[a.status]}`}>{apptLabel[a.status]}</span>
               </div>
@@ -177,7 +198,7 @@ export default function AgendaPage() {
               </div>
             </div>
           )) : (
-            <EmptyState icon={CalendarDays} title="Día libre" text="No hay citas programadas." action={<button className="btn-primary btn-sm" onClick={() => setModal({ defaults: { date: day } })}>Agendar</button>} />
+            <EmptyState icon={CalendarDays} title="Día libre" text="No hay citas programadas." action={<button className="btn-primary btn-sm" onClick={() => setModal({ defaults: { ...(pro !== "todos" ? { professionalId: pro } : {}), date: day } })}>Agendar</button>} />
           )}
         </aside>
       </div>

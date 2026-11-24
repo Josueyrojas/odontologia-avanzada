@@ -11,7 +11,7 @@ import { apptBadge, apptLabel, budgetBadge, budgetLabel } from "@/components/sta
 import { AppointmentFormModal, CheckoutModal, PatientFormModal, PaymentFormModal } from "@/components/forms";
 
 export default function Dashboard() {
-  const { db } = useStore();
+  const { db, role } = useStore();
   const appts = useCollection("appointments");
   const { toast } = useUI();
   const [modal, setModal] = useState<"cita" | "paciente" | "pago" | null>(null);
@@ -63,7 +63,7 @@ export default function Dashboard() {
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard label="Citas de hoy" value={`${done}/${todays.length}`} note="atendidas" icon={CalendarCheck} />
         <StatCard label="Cobrado hoy" value={mxn(incomeToday)} note={`${mxn(incomeMonth)} en el mes`} icon={Wallet} />
-        <StatCard label="Utilidad del mes" value={mxn(incomeMonth - expMonth)} note={`Egresos ${mxn(expMonth)}`} icon={TrendingUp} tone={incomeMonth - expMonth >= 0 ? "green" : "red"} />
+        {role !== "recepcion" && <StatCard label="Utilidad del mes" value={mxn(incomeMonth - expMonth)} note={`Egresos ${mxn(expMonth)}`} icon={TrendingUp} tone={incomeMonth - expMonth >= 0 ? "green" : "red"} />}
         <StatCard label="Por cobrar" value={mxn(owed)} note="presupuestos aceptados" icon={CircleDollarSign} tone={owed ? "amber" : "white"} />
       </div>
 
