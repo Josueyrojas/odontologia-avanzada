@@ -8,7 +8,7 @@ import { AppointmentFormModal, CheckoutModal } from "@/components/forms";
 import { activeRisks, riskLabel } from "@/components/clinical";
 import { apptBadge, apptBlock, apptLabel } from "@/components/status";
 import { professionalsOf, useCollection, useStore } from "@/lib/store";
-import { addDays, fmtDate, fmtLong, fromMin, nowTime, parseDate, startOfWeek, toMin, today, whatsappLink } from "@/lib/format";
+import { addDays, fmtDate, fmtLong, fromMin, isPast, nowTime, parseDate, startOfWeek, today, toMin, whatsappLink } from "@/lib/format";
 import type { Appointment, AppointmentStatus } from "@/lib/types";
 
 const SLOT = 30, ROW_PX = 32;
@@ -88,7 +88,7 @@ export default function AgendaPage() {
         <button className="btn-outline" onClick={() => setDay(t)}>Hoy</button>
         <button className="btn-outline px-3" aria-label="Siguiente" onClick={() => shift(1)}><ChevronRight size={18} /></button>
         <input type="date" aria-label="Ir a fecha" className="input w-auto" value={day} onChange={(e) => e.target.value && setDay(e.target.value)} />
-        <button className="btn-primary" onClick={() => setModal({ defaults: { ...(pro !== "todos" ? { professionalId: pro } : {}), date: day } })}><Plus size={18} /> Nueva cita</button>
+        <button className="btn-primary" onClick={() => setModal({ defaults: { ...(pro !== "todos" ? { professionalId: pro } : {}), date: day < t ? t : day } })}><Plus size={18} /> Nueva cita</button>
       </PageHeader>
 
       <div className="grid gap-5 xl:grid-cols-[3fr_1.1fr]">
@@ -135,11 +135,16 @@ export default function AgendaPage() {
               return (
                 <div key={d} className={`relative border-l border-line ${d === t ? "bg-brand-soft/30" : ""}`} style={{ height: slots * ROW_PX }}>
                   {Array.from({ length: slots }).map((_, i) => (
+                    // Los horarios que ya terminaron no se pueden usar para agendar
+                    isPast(d, fromMin(startHour * 60 + (i + 1) * SLOT - 1)) ? (
+                      <div key={i} aria-hidden="true" className={`block w-full border-t bg-bg/70 ${i % 2 ? "border-bg" : "border-line"}`} style={{ height: ROW_PX }} />
+                    ) : (
                     <button key={i} aria-label={`Agendar ${fmtDate(d)} ${fromMin(startHour * 60 + i * SLOT)}`}
                       onClick={() => setModal({ defaults: { ...(pro !== "todos" ? { professionalId: pro } : {}), date: d, start: fromMin(startHour * 60 + i * SLOT) } })}
                       className={`group block w-full border-t text-left ${i % 2 ? "border-bg" : "border-line"} hover:bg-brand-soft`} style={{ height: ROW_PX }}>
                       <span className="hidden pl-2 text-[11px] font-bold text-brand group-hover:inline">+ {fromMin(startHour * 60 + i * SLOT)}</span>
                     </button>
+                    )
                   ))}
                   {d === t && nowTop > 0 && nowTop < slots * ROW_PX && (
                     <div className="pointer-events-none absolute inset-x-0 z-20 flex items-center" style={{ top: nowTop }}>
@@ -198,7 +203,8 @@ export default function AgendaPage() {
               </div>
             </div>
           )) : (
-            <EmptyState icon={CalendarDays} title="Día libre" text="No hay citas programadas." action={<button className="btn-primary btn-sm" onClick={() => setModal({ defaults: { ...(pro !== "todos" ? { professionalId: pro } : {}), date: day } })}>Agendar</button>} />
+            <EmptyState icon={CalendarDays} title={day < t ? "Sin citas" : "Día libre"} text={day < t ? "No hubo citas este día." : "No hay citas programadas."}
+              action={day < t ? undefined : <button className="btn-primary btn-sm" onClick={() => setModal({ defaults: { ...(pro !== "todos" ? { professionalId: pro } : {}), date: day } })}>Agendar</button>} />
           )}
         </aside>
       </div>

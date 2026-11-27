@@ -25,6 +25,16 @@ export const nowTime = () => { const d = new Date(); return `${pad(d.getHours())
 export const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
 export const fromMin = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 
+/** true si la fecha y hora indicadas ya pasaron (día anterior, u hoy a una hora anterior a la actual). */
+export const isPast = (date: string, start: string) => date < today() || (date === today() && toMin(start) < toMin(nowTime()));
+
+/** Primer horario de agenda (en pasos de `step` min) que todavía no pasa hoy; null si ya no queda ninguno. */
+export const nextOpenSlot = (startHour: number, endHour: number, step = 15) => {
+  const now = toMin(nowTime());
+  for (let m = startHour * 60; m < endHour * 60; m += step) if (m >= now) return fromMin(m);
+  return null;
+};
+
 export const fmtDate = (s: string, opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" }) =>
   parseDate(s).toLocaleDateString("es-MX", opts);
 export const fmtLong = (s: string) => fmtDate(s, { weekday: "long", day: "numeric", month: "long" });

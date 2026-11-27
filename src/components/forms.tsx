@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Modal, useUI } from "./ui";
 import { apptLabel, expenseCategories, methodLabel } from "./status";
 import { activeProfessionals, budgetTotals, consumeMaterials, nextReceiptFolio, paidForBudget, useCollection, useStore } from "@/lib/store";
-import { fmtQty, fromMin, mxn, today, toMin, uid } from "@/lib/format";
+import { addDays, fmtQty, fromMin, isPast, mxn, nextOpenSlot, today, toMin, uid } from "@/lib/format";
 import type { Appointment, AppointmentStatus, Patient, Payment, PaymentMethod } from "@/lib/types";
 
 /* ---------------- Paciente ---------------- */
@@ -57,11 +57,21 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
   const { toast, confirm } = useUI();
   const [newPatient, setNewPatient] = useState(false);
   const pros = activeProfessionals(db.settings);
-  const blank = (): Appointment => ({
-    id: "", patientId: db.patients[0]?.id ?? "", procedureId: db.procedures[0]?.id, treatment: db.procedures[0]?.name ?? "",
-    date: today(), start: "09:00", durationMin: db.procedures[0]?.durationMin ?? 30, status: "pendiente", notes: "",
-    professionalId: pros.length > 1 ? pros[0].id : undefined, ...defaults,
-  });
+  const { startHour, endHour } = db.settings;
+  /** Lleva una fecha/hora propuesta al primer horario que todavía no pasa (hoy o el siguiente día). */
+  const toOpen = (date: string, start: string) => {
+    if (!isPast(date, start)) return { date, start };
+    const next = nextOpenSlot(startHour, endHour);
+    return next && date <= today() ? { date: today(), start: next } : { date: addDays(today(), 1), start: fromMin(startHour * 60) };
+  };
+  const blank = (): Appointment => {
+    const a: Appointment = {
+      id: "", patientId: db.patients[0]?.id ?? "", procedureId: db.procedures[0]?.id, treatment: db.procedures[0]?.name ?? "",
+      date: today(), start: fromMin(startHour * 60), durationMin: db.procedures[0]?.durationMin ?? 30, status: "pendiente", notes: "",
+      professionalId: pros.length > 1 ? pros[0].id : undefined, ...defaults,
+    };
+    return { ...a, ...toOpen(a.date, a.start) };
+  };
   const [f, setF] = useState<Appointment>(appt ?? blank());
   useEffect(() => { if (open) setF(appt ?? blank()); }, [open, appt]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = <K extends keyof Appointment>(k: K, v: Appointment[K]) => setF((x) => ({ ...x, [k]: v }));
@@ -73,11 +83,18 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
     toMin(a.start) < toMin(f.start) + f.durationMin && toMin(f.start) < toMin(a.start) + a.durationMin);
 
   const slots: string[] = [];
-  for (let m = db.settings.startHour * 60; m < db.settings.endHour * 60; m += 15) slots.push(fromMin(m));
+  for (let m = startHour * 60; m < endHour * 60; m += 15) slots.push(fromMin(m));
+  // Una cita existente puede editarse aunque ya pasó; lo que no se permite es llevarla (o crearla) en el pasado
+  const whenChanged = !appt || appt.date !== f.date || appt.start !== f.start;
+  const pastError = whenChanged && isPast(f.date, f.start)
+    ? f.date < today() ? "No se pueden agendar citas en días pasados." : "Esa hora ya pasó. Elige un horario posterior."
+    : "";
+  const noSlotsToday = f.date === today() && !nextOpenSlot(startHour, endHour);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!f.patientId) return toast("Selecciona un paciente", "error");
+    if (pastError) return toast(pastError, "error");
     if (overlap && !(await confirm({ title: "Horario ocupado", text: `Se empalma con la cita de ${db.patients.find((p) => p.id === overlap.patientId)?.name} a las ${overlap.start}. ¿Agendar de todos modos?`, confirmLabel: "Agendar" }))) return;
     appts.save({ ...f, id: f.id || `a${uid()}` });
     toast(appt ? "Cita actualizada" : "Cita agendada");
@@ -96,7 +113,7 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
         footer={<>
           {appt && <button type="button" className="btn-ghost mr-auto text-danger" onClick={del}>Eliminar</button>}
           <button type="button" className="btn-outline" onClick={onClose}>Cancelar</button>
-          <button form="appt-form" className="btn-primary">{appt ? "Guardar cambios" : "Agendar cita"}</button>
+          <button form="appt-form" className="btn-primary" disabled={!!pastError || noSlotsToday && whenChanged && f.date === today()}>{appt ? "Guardar cambios" : "Agendar cita"}</button>
         </>}>
         <form id="appt-form" onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
           <div className="label sm:col-span-2">
@@ -127,11 +144,22 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
               <option value="">Otro / consulta general</option>
             </select>
           </label>
-          <label className="label">Fecha<input required type="date" className="input" value={f.date} onChange={(e) => set("date", e.target.value)} /></label>
+          <label className="label">Fecha
+            <input required type="date" className="input" min={appt && appt.date < today() && !whenChanged ? undefined : today()} value={f.date}
+              onChange={(e) => {
+                const date = e.target.value;
+                // Si se cambia a hoy y la hora elegida ya pasó, se propone la siguiente disponible
+                setF((x) => ({ ...x, date, ...(date === today() && isPast(date, x.start) && nextOpenSlot(startHour, endHour) ? { start: nextOpenSlot(startHour, endHour)! } : {}) }));
+              }} />
+          </label>
           <label className="label">Hora
             <select className="input" value={f.start} onChange={(e) => set("start", e.target.value)}>
               {!slots.includes(f.start) && <option>{f.start}</option>}
-              {slots.map((s) => <option key={s}>{s}</option>)}
+              {slots.map((s) => {
+                // Hoy, las horas que ya pasaron no se pueden elegir (salvo la hora original de una cita existente)
+                const gone = isPast(f.date, s) && !(appt && appt.date === f.date && appt.start === s);
+                return <option key={s} value={s} disabled={gone}>{s}{gone ? " · ya pasó" : ""}</option>;
+              })}
             </select>
           </label>
           <label className="label">Duración
@@ -145,6 +173,11 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
             </select>
           </label>
           <label className="label sm:col-span-2">Notas<textarea className="input min-h-[70px]" value={f.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Indicaciones, motivo de consulta…" /></label>
+          {(pastError || noSlotsToday) && (
+            <p className="flex items-center gap-2 rounded-xl bg-[#FBE3E0] p-3 text-sm font-semibold text-[#9E2A20] sm:col-span-2">
+              <AlertTriangle size={16} /> {pastError || "Ya no quedan horarios disponibles hoy. Elige otra fecha."}
+            </p>
+          )}
           {overlap && (
             <p className="flex items-center gap-2 rounded-xl bg-[#FDF1D8] p-3 text-sm text-[#855A06] sm:col-span-2">
               <AlertTriangle size={16} /> Se empalma con {db.patients.find((p) => p.id === overlap.patientId)?.name} ({overlap.start}, {overlap.durationMin} min)
