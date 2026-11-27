@@ -52,7 +52,10 @@ export function PatientFormModal({ open, onClose, patient, onSaved }: {
 export function AppointmentFormModal({ open, onClose, appt, defaults }: {
   open: boolean; onClose: () => void; appt?: Appointment; defaults?: Partial<Appointment>;
 }) {
-  const { db } = useStore();
+  const { db, role } = useStore();
+  // El doctor (o el modo sin nube) puede registrar visitas pasadas que no se capturaron; recepción no
+  const canBackdate = role !== "recepcion";
+  const [backdate, setBackdate] = useState(false);
   const appts = useCollection("appointments");
   const { toast, confirm } = useUI();
   const [newPatient, setNewPatient] = useState(false);
@@ -73,7 +76,7 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
     return { ...a, ...toOpen(a.date, a.start) };
   };
   const [f, setF] = useState<Appointment>(appt ?? blank());
-  useEffect(() => { if (open) setF(appt ?? blank()); }, [open, appt]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open) { setF(appt ?? blank()); setBackdate(false); } }, [open, appt]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = <K extends keyof Appointment>(k: K, v: Appointment[K]) => setF((x) => ({ ...x, [k]: v }));
 
   // Solo cuenta como empalme si es el mismo profesional (o alguna de las dos citas no tiene asignado)
@@ -86,7 +89,8 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
   for (let m = startHour * 60; m < endHour * 60; m += 15) slots.push(fromMin(m));
   // Una cita existente puede editarse aunque ya pasó; lo que no se permite es llevarla (o crearla) en el pasado
   const whenChanged = !appt || appt.date !== f.date || appt.start !== f.start;
-  const pastError = whenChanged && isPast(f.date, f.start)
+  const inPast = whenChanged && isPast(f.date, f.start);
+  const pastError = inPast && !(canBackdate && backdate)
     ? f.date < today() ? "No se pueden agendar citas en días pasados." : "Esa hora ya pasó. Elige un horario posterior."
     : "";
   const noSlotsToday = f.date === today() && !nextOpenSlot(startHour, endHour);
@@ -96,7 +100,8 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
     if (!f.patientId) return toast("Selecciona un paciente", "error");
     if (pastError) return toast(pastError, "error");
     if (overlap && !(await confirm({ title: "Horario ocupado", text: `Se empalma con la cita de ${db.patients.find((p) => p.id === overlap.patientId)?.name} a las ${overlap.start}. ¿Agendar de todos modos?`, confirmLabel: "Agendar" }))) return;
-    appts.save({ ...f, id: f.id || `a${uid()}` });
+    // Una visita pasada registrada por el doctor queda como atendida
+    appts.save({ ...f, id: f.id || `a${uid()}`, ...(inPast && backdate && ["pendiente", "confirmada"].includes(f.status) ? { status: "completada" as const } : {}) });
     toast(appt ? "Cita actualizada" : "Cita agendada");
     onClose();
   };
@@ -113,7 +118,7 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
         footer={<>
           {appt && <button type="button" className="btn-ghost mr-auto text-danger" onClick={del}>Eliminar</button>}
           <button type="button" className="btn-outline" onClick={onClose}>Cancelar</button>
-          <button form="appt-form" className="btn-primary" disabled={!!pastError || noSlotsToday && whenChanged && f.date === today()}>{appt ? "Guardar cambios" : "Agendar cita"}</button>
+          <button form="appt-form" className="btn-primary" disabled={!!pastError || (noSlotsToday && whenChanged && f.date === today() && !(canBackdate && backdate))}>{appt ? "Guardar cambios" : "Agendar cita"}</button>
         </>}>
         <form id="appt-form" onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
           <div className="label sm:col-span-2">
@@ -145,7 +150,7 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
             </select>
           </label>
           <label className="label">Fecha
-            <input required type="date" className="input" min={appt && appt.date < today() && !whenChanged ? undefined : today()} value={f.date}
+            <input required type="date" className="input" min={canBackdate || (appt && appt.date < today() && !whenChanged) ? undefined : today()} value={f.date}
               onChange={(e) => {
                 const date = e.target.value;
                 // Si se cambia a hoy y la hora elegida ya pasó, se propone la siguiente disponible
@@ -157,7 +162,7 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
               {!slots.includes(f.start) && <option>{f.start}</option>}
               {slots.map((s) => {
                 // Hoy, las horas que ya pasaron no se pueden elegir (salvo la hora original de una cita existente)
-                const gone = isPast(f.date, s) && !(appt && appt.date === f.date && appt.start === s);
+                const gone = isPast(f.date, s) && !(appt && appt.date === f.date && appt.start === s) && !(canBackdate && backdate);
                 return <option key={s} value={s} disabled={gone}>{s}{gone ? " · ya pasó" : ""}</option>;
               })}
             </select>
@@ -173,7 +178,13 @@ export function AppointmentFormModal({ open, onClose, appt, defaults }: {
             </select>
           </label>
           <label className="label sm:col-span-2">Notas<textarea className="input min-h-[70px]" value={f.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Indicaciones, motivo de consulta…" /></label>
-          {(pastError || noSlotsToday) && (
+          {inPast && canBackdate && (
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-[#FDF1D8] p-3 text-sm text-[#855A06] sm:col-span-2">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-brand" checked={backdate} onChange={(e) => setBackdate(e.target.checked)} />
+              <span><b>Registrar una visita que ya ocurrió.</b> Úsalo para capturar una cita pasada que no se registró; se guardará como completada.</span>
+            </label>
+          )}
+          {(pastError || noSlotsToday) && !(inPast && canBackdate) && (
             <p className="flex items-center gap-2 rounded-xl bg-[#FBE3E0] p-3 text-sm font-semibold text-[#9E2A20] sm:col-span-2">
               <AlertTriangle size={16} /> {pastError || "Ya no quedan horarios disponibles hoy. Elige otra fecha."}
             </p>

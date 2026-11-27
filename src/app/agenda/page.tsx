@@ -8,7 +8,7 @@ import { AppointmentFormModal, CheckoutModal } from "@/components/forms";
 import { activeRisks, riskLabel } from "@/components/clinical";
 import { apptBadge, apptBlock, apptLabel } from "@/components/status";
 import { professionalsOf, useCollection, useStore } from "@/lib/store";
-import { addDays, fmtDate, fmtLong, fromMin, isPast, nowTime, parseDate, startOfWeek, today, toMin, whatsappLink } from "@/lib/format";
+import { addDays, fmtDate, fmtLong, fromMin, isPast, nowTime, parseDate, SLOT_MIN, startOfWeek, today, toMin, whatsappLink } from "@/lib/format";
 import type { Appointment, AppointmentStatus } from "@/lib/types";
 
 const SLOT = 30, ROW_PX = 32;
@@ -136,7 +136,7 @@ export default function AgendaPage() {
                 <div key={d} className={`relative border-l border-line ${d === t ? "bg-brand-soft/30" : ""}`} style={{ height: slots * ROW_PX }}>
                   {Array.from({ length: slots }).map((_, i) => (
                     // Los horarios que ya terminaron no se pueden usar para agendar
-                    isPast(d, fromMin(startHour * 60 + (i + 1) * SLOT - 1)) ? (
+                    isPast(d, fromMin(startHour * 60 + (i + 1) * SLOT - SLOT_MIN)) ? (
                       <div key={i} aria-hidden="true" className={`block w-full border-t bg-bg/70 ${i % 2 ? "border-bg" : "border-line"}`} style={{ height: ROW_PX }} />
                     ) : (
                     <button key={i} aria-label={`Agendar ${fmtDate(d)} ${fromMin(startHour * 60 + i * SLOT)}`}
