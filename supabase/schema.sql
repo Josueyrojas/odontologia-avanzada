@@ -134,12 +134,16 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from administradores where user_id = auth.uid())
 $$;
 
--- Licencia vigente: activa y sin vencer (con 5 días de gracia después de la fecha de vencimiento)
+-- Licencia vigente: activa y sin vencer (con 5 días de gracia después de la fecha de vencimiento).
+-- La fecha se toma en hora del centro de México, igual que la app (si no, el corte sería a las 6 p.m.).
+create or replace function public.hoy_mx() returns date
+language sql stable as $$ select (now() at time zone 'America/Mexico_City')::date $$;
+
 create or replace function public.clinica_activa() returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (
     select 1 from clinicas
-    where id = mi_clinica() and estado = 'activa' and (vence_el is null or current_date <= vence_el + 5)
+    where id = mi_clinica() and estado = 'activa' and (vence_el is null or hoy_mx() <= vence_el + 5)
   )
 $$;
 

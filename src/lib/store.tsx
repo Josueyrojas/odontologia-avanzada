@@ -146,23 +146,37 @@ function CloudStore({ children }: { children: React.ReactNode }) {
   const userId = session?.user.id;
   useEffect(() => { if (userId && phase !== "recovery") load(); }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Revisa la licencia en la nube; si se suspendió o venció, muestra la pantalla de licencia.
+   * `flushFirst`: intentar enviar lo pendiente antes de bloquear (no se usa cuando la propia cola
+   * es la que pide la revisión, porque se quedaría esperándose a sí misma).
+   */
+  const checkLicense = useCallback(async (flushFirst = true) => {
+    if (!userId) return;
+    try {
+      const { clinic: fresh } = await loadProfile(userId);
+      if (!fresh) return;
+      if (!license(fresh).canUse) {
+        if (flushFirst) await queue.current?.flush();
+        setClinic(fresh); setPhase("license");
+        return;
+      }
+      // Solo se actualiza si cambió algo (evita reiniciar la sincronización en cada revisión)
+      setClinic((c) => c && c.estado === fresh.estado && c.vence_el === fresh.vence_el && c.nombre === fresh.nombre && c.codigo === fresh.codigo ? c : fresh);
+    } catch { /* sin conexión: se revisa en la siguiente vuelta */ }
+  }, [userId]);
+  const checkRef = useRef(checkLicense);
+  checkRef.current = checkLicense;
+
   // Revisa la licencia cada 10 minutos y al volver a la pestaña: si se suspende o vence, se bloquea sin recargar
   useEffect(() => {
     if (phase !== "ready" || !userId) return;
-    const check = async () => {
-      try {
-        const { clinic: fresh } = await loadProfile(userId);
-        if (!fresh) return;
-        if (!license(fresh).canUse) { await queue.current?.flush(); setClinic(fresh); setPhase("license"); return; }
-        // Solo se actualiza si cambió algo (evita reiniciar la sincronización en cada revisión)
-        setClinic((c) => c && c.estado === fresh.estado && c.vence_el === fresh.vence_el && c.nombre === fresh.nombre && c.codigo === fresh.codigo ? c : fresh);
-      } catch { /* sin conexión: se revisa en la siguiente vuelta */ }
-    };
+    const check = () => checkLicense();
     const timer = setInterval(check, 10 * 60 * 1000);
     const onVisible = () => { if (document.visibilityState === "visible") check(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
-  }, [phase, userId]);
+  }, [phase, userId, checkLicense]);
 
   // Cola de sincronización + tiempo real
   useEffect(() => {
@@ -170,7 +184,12 @@ function CloudStore({ children }: { children: React.ReactNode }) {
     const q = new SyncQueue(clinic.id, userId, (s, err, permanent) => {
       setSync(s);
       // Los errores de conexión se reintentan solos; solo se avisa lo que requiere atención
-      if (permanent) toast(`No se pudo guardar un cambio: ${err}. Recarga la página.`, "error");
+      if (permanent) {
+        toast("No se pudo guardar un cambio en la nube. Quedó guardado en este equipo y se enviará al volver a entrar.", "error");
+        console.warn("Cambio rechazado por la nube:", err);
+        // La causa más común es la licencia vencida o suspendida: se revisa ya, sin esperar 10 minutos
+        checkRef.current(false);
+      }
     });
     queue.current = q;
     const unsub = subscribe(clinic.id, userId, (ev) => {

@@ -34,7 +34,16 @@ export const GRACE_DAYS = 5;
 export const planLabel: Record<LicensePlan, string> = { prueba: "Prueba", contado: "Contado", mensualidades: "Mensualidades", renta: "Renta mensual", cortesia: "Cortesía" };
 
 /** Estado efectivo de la licencia de una clínica. */
-export function license(c: Pick<Clinic, "estado" | "vence_el">, today = new Date()) {
+/** Fecha de hoy en la Ciudad de México (la misma que usa la base de datos para cortar licencias). */
+export function hoyMx(): Date {
+  try {
+    const [y, m, d] = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" })
+      .format(new Date()).split("-").map(Number);
+    return new Date(y, m - 1, d);
+  } catch { return new Date(); }
+}
+
+export function license(c: Pick<Clinic, "estado" | "vence_el">, today = hoyMx()) {
   const estado = c.estado ?? "activa";
   const t = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   const daysLeft = c.vence_el ? Math.round((new Date(`${c.vence_el}T00:00`).getTime() - t) / 864e5) : null;
@@ -185,7 +194,9 @@ export const fullUpload = (db: DB, clinicaId: string): Change => ({
 });
 
 export type SyncState = "saving" | "saved" | "offline" | "error";
-type Pending = { kind: "upsert"; row: Row } | { kind: "delete"; coleccion: Coleccion; id: string };
+/** `tries`: sesiones en las que la nube rechazó este cambio (p. ej. con la licencia vencida). */
+type Pending = ({ kind: "upsert"; row: Row } | { kind: "delete"; coleccion: Coleccion; id: string }) & { tries?: number };
+const MAX_TRIES = 3;
 
 /** Cambios pendientes guardados en este navegador (sin crear la cola). */
 export function readPending(clinicaId: string, userId: string): Pending[] {
@@ -214,6 +225,8 @@ const isPermanent = (e: { code?: string; message?: string; status?: number }) =>
  */
 export class SyncQueue {
   private ops = new Map<string, Pending>();
+  /** Rechazados en esta sesión: se guardan y se reenvían al volver a entrar, no ahora. */
+  private held = new Map<string, Pending>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing: Promise<void> | null = null;
   private attempt = 0;
@@ -234,8 +247,11 @@ export class SyncQueue {
   dispose() { if (typeof window !== "undefined") window.removeEventListener("online", this.onOnline); if (this.timer) clearTimeout(this.timer); }
 
   private persist() {
+    // Se guardan juntos lo pendiente y lo apartado; si son del mismo registro, se unen
+    const all = new Map(this.held);
+    for (const [k, v] of this.ops) all.set(k, all.has(k) ? mergePending(all.get(k), v) : v);
     try {
-      if (this.ops.size) localStorage.setItem(this.storageKey, JSON.stringify([...this.ops.entries()]));
+      if (all.size) localStorage.setItem(this.storageKey, JSON.stringify([...all.entries()]));
       else localStorage.removeItem(this.storageKey);
     } catch { /* almacenamiento lleno o bloqueado */ }
   }
@@ -243,8 +259,11 @@ export class SyncQueue {
 
   get pending() { return this.ops.size; }
   /** Cambios pendientes, para volver a aplicarlos sobre datos recién descargados o recibidos de otro usuario. */
-  get pendingOps(): Pending[] { return [...this.ops.values()]; }
-  pendingFor(c: Coleccion, id: string) { return this.ops.get(keyOf(c, id)); }
+  get pendingOps(): Pending[] { return [...this.held.values(), ...this.ops.values()]; }
+  pendingFor(c: Coleccion, id: string) {
+    const k = keyOf(c, id), h = this.held.get(k), o = this.ops.get(k);
+    return h && o ? mergePending(h, o) : o ?? h;
+  }
 
   push(ch: Change) {
     for (const r of ch.upserts) { const k = keyOf(r.coleccion, r.id); this.ops.set(k, mergePending(this.ops.get(k), { kind: "upsert", row: r })); }
@@ -270,7 +289,12 @@ export class SyncQueue {
       } catch (err) {
         const e = err as { code?: string; message?: string };
         if (isPermanent(e)) {
-          // No se reintenta: se avisa para recargar desde la nube
+          // La nube los rechazó (licencia vencida, permisos…): no se pierden. Se apartan y se reenvían
+          // la próxima vez que se entre; tras MAX_TRIES sesiones rechazados se descartan.
+          for (const [k, v] of batch) {
+            const tries = (v.tries ?? 0) + 1;
+            if (tries < MAX_TRIES) this.held.set(k, { ...v, tries });
+          }
           this.persist();
           this.onState("error", e.message, true);
         } else {
